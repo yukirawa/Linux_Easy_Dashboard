@@ -1,0 +1,24 @@
+# 負荷平均の推移を折れ線で表示する例（sparkline ビュー）。
+#
+# 数値系のビューは `history` サンプル分を保持して折れ線にします。
+# `max` を指定すると縦軸が固定され、変化が読みやすくなります。
+
+id = "load-trend"
+name = "負荷の推移"
+summary = "/proc/loadavg の 1 分値を折れ線で"
+icon = "speedometer-symbolic"
+category = "system"
+size = [360, 180]
+refresh = 2
+
+[source]
+kind = "file"
+path = "/proc/loadavg"
+
+[view]
+kind = "sparkline"
+history = 90
+min = 0
+max = 8
+unit = ""
+label = "1 分平均"

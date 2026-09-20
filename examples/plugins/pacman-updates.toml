@@ -1,0 +1,28 @@
+# pacman の更新件数を大きく表示する例。
+#
+# 更新が 0 件のときは何も出力しないので、`hidden_when_idle = true` と組み合わせると
+# **更新があるときだけタイルが現れます**（編集モードでは常に見えます）。
+#
+# checkupdates は pacman-contrib パッケージに含まれます。
+# パイプの終了ステータスは最後のコマンドのものなので、checkupdates が無い環境でも
+# 空出力＝「今は何も無い」としてタイルが隠れるだけです。その場合は詳細ビューの
+# 「現在の出力」に理由が出ます。
+
+id = "pacman-updates"
+name = "更新"
+summary = "pacman の更新件数"
+icon = "software-update-available-symbolic"
+category = "system"
+size = [240, 160]
+refresh = 1800 # 30 分ごと
+hidden_when_idle = true
+
+[source]
+kind = "command"
+run = "checkupdates 2>/dev/null | awk '$1 > 0 { print $1 }'"
+timeout_secs = 60
+
+[view]
+kind = "readout"
+label = "更新"
+unit = "件"

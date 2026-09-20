@@ -1,0 +1,23 @@
+# メモリを食っているプロセスの上位を一覧表示する例。
+#
+# `ps -eo rss=,comm=` は「RSS(KB) 名前」の順に出すので、awk で
+# `名前|MB` に組み替えてから 2 列として読ませています。
+
+id = "top-memory"
+name = "メモリ上位"
+summary = "RSS の大きいプロセス"
+icon = "view-list-symbolic"
+category = "system"
+size = [380, 220]
+refresh = 10
+
+[source]
+kind = "command"
+run = "ps -eo rss=,comm= --sort=-rss | head -5 | awk '{ printf \"%s|%.0f MB\\n\", $2, $1/1024 }'"
+
+[view]
+kind = "list"
+rows = 5
+split = "|"
+label_column = 0
+value_column = 1

@@ -1,0 +1,26 @@
+# CPU の現在の周波数をリングで表示する例。
+#
+# /sys の値をそのまま読むだけなので、コマンド実行もネットワークも不要です。
+# `scale = 0.001` で kHz → MHz に変換しています。
+
+id = "cpu-freq"
+name = "CPU 周波数"
+summary = "現在の動作周波数 (MHz)"
+icon = "power-profile-performance-symbolic"
+category = "system"
+size = [300, 220]
+refresh = 2
+
+[source]
+kind = "file"
+path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"
+
+[view]
+kind = "ring"
+min = 0
+max = 5000
+scale = 0.001
+unit = "MHz"
+label = "cpu0"
+# 4000 MHz を超えたら警告色にする。
+warn_at = 4000

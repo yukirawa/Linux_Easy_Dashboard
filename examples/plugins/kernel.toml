@@ -1,0 +1,19 @@
+# カーネルバージョンをそのまま表示する例（text ビュー）。
+#
+# 数値にしたくない・加工したくない出力は text が向いています。
+
+id = "kernel"
+name = "カーネル"
+summary = "uname -r をそのまま"
+icon = "application-x-executable-symbolic"
+category = "info"
+size = [300, 150]
+refresh = 3600
+
+[source]
+kind = "command"
+run = "uname -r"
+
+[view]
+kind = "text"
+wrap = true

@@ -1,0 +1,193 @@
+/* Easy Dashboard Maker — GTK4 stylesheet.
+ *
+ * Only presentation lives here. Colours are expressed relative to the widget
+ * (`currentColor`) or with libadwaita's named colours, so light, dark and
+ * custom accent choices all work without this file knowing about them.
+ * Motion is short and uses one ease-out curve everywhere, in the spirit of the
+ * platform's HIG rather than a web dashboard.
+ */
+
+.edm-canvas {
+  background-color: @window_bg_color;
+}
+
+/* Widget tiles ----------------------------------------------------------- */
+
+.edm-tile {
+  padding: 14px 16px;
+  border-radius: 18px;
+  background-color: alpha(currentColor, 0.05);
+  box-shadow: 0 1px 2px alpha(black, 0.08);
+  transition:
+    background-color 200ms cubic-bezier(0.25, 0.1, 0.25, 1),
+    box-shadow 200ms cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+.edm-tile:hover {
+  background-color: alpha(currentColor, 0.08);
+  box-shadow: 0 2px 8px alpha(black, 0.12);
+}
+
+.edm-canvas.edit .edm-tile {
+  outline: 1px dashed alpha(currentColor, 0.2);
+  outline-offset: -1px;
+}
+
+.edm-canvas.edit .edm-tile.selected {
+  outline: 2px solid @accent_bg_color;
+  outline-offset: -2px;
+}
+
+/* Ink colours used by cairo-drawn widgets.
+ *
+ * The widgets read these through hidden probe labels (`graphics::Ink`), which
+ * is how cairo gets theme colours without knowing about the theme. */
+.edm-ink-accent {
+  color: @accent_bg_color;
+}
+
+.edm-ink-warn {
+  color: @warning_color;
+}
+
+.edm-ink-error {
+  color: @error_color;
+}
+
+/* Widget content --------------------------------------------------------- */
+
+/* Large number in a tile, e.g. a percentage. */
+.edm-readout {
+  font-size: 30px;
+  font-weight: 300;
+  font-feature-settings: "tnum";
+}
+
+/* Tabular numbers, so digital values do not jitter. */
+.edm-mono {
+  font-feature-settings: "tnum";
+}
+
+/* The bar next to a heading widget. */
+.edm-accent-bar {
+  background-color: @accent_bg_color;
+  border-radius: 3px;
+}
+
+/* Day / night marker of the world clock. */
+.edm-day-marker {
+  border-radius: 4px;
+  background-color: alpha(currentColor, 0.15);
+}
+
+.edm-day {
+  background-color: @accent_bg_color;
+}
+
+.edm-night {
+  background-color: alpha(currentColor, 0.25);
+}
+
+/* Calendar cells. */
+.edm-day-cell {
+  min-width: 26px;
+  min-height: 24px;
+  border-radius: 6px;
+  font-feature-settings: "tnum";
+}
+
+/* Today's cell. The text keeps the theme foreground, which stays readable on
+ * every accent colour in both light and dark. */
+.edm-today {
+  background-color: @accent_bg_color;
+  font-weight: 600;
+}
+
+/* The "today" widget: a very light date, set like a poster. */
+.edm-date-day {
+  font-size: 56px;
+  font-weight: 200;
+  font-feature-settings: "tnum";
+}
+
+.edm-date-weekday {
+  font-size: 15px;
+  font-weight: 600;
+  color: @accent_bg_color;
+}
+
+/* Launcher buttons. */
+.edm-launcher-button {
+  padding: 8px;
+  border-radius: 12px;
+  transition: background-color 150ms cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+.edm-launcher-button:hover {
+  background-color: alpha(currentColor, 0.1);
+}
+
+.edm-launcher-button:active {
+  background-color: alpha(currentColor, 0.18);
+}
+
+/* Album art of the media widget. */
+.edm-cover {
+  border-radius: 10px;
+}
+
+/* Raw output and definition text (plugins). */
+.edm-code {
+  font-family: monospace;
+}
+
+/* Chrome ----------------------------------------------------------------- */
+
+.edm-time {
+  font-size: 44px;
+  font-weight: 300;
+  font-feature-settings: "tnum";
+}
+
+.edm-time-large {
+  font-size: 64px;
+}
+
+.edm-value {
+  font-feature-settings: "tnum";
+}
+
+/* Thin, quiet meters. */
+.edm-bar {
+  min-height: 6px;
+}
+
+.edm-bar trough {
+  min-height: 6px;
+  border-radius: 3px;
+  background-color: alpha(currentColor, 0.12);
+}
+
+.edm-bar progress {
+  min-height: 6px;
+  border-radius: 3px;
+  background-color: @accent_bg_color;
+}
+
+/* Chrome ----------------------------------------------------------------- */
+
+.edm-hint-bar {
+  padding: 0 12px;
+}
+
+.edm-picker row {
+  border-radius: 12px;
+}
+
+/* Header of the add-widget popover. */
+.edm-picker-section {
+  font-size: 11px;
+  font-weight: 700;
+  color: alpha(currentColor, 0.55);
+  padding: 8px 12px 2px 12px;
+}

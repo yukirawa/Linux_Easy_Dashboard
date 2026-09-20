@@ -1,0 +1,24 @@
+# CPU 温度を横バーで表示する例。
+#
+# thermal_zone0 は多くのノート PC にあります。値はミリ度なので
+# `scale = 0.001` で °C にしています。
+
+id = "thermal"
+name = "CPU 温度"
+summary = "thermal_zone0 の温度"
+icon = "temperature-symbolic"
+category = "system"
+size = [320, 180]
+refresh = 5
+
+[source]
+kind = "file"
+path = "/sys/class/thermal/thermal_zone0/temp"
+
+[view]
+kind = "bar"
+min = 20
+max = 95
+scale = 0.001
+unit = "°C"
+warn_at = 80

@@ -1,0 +1,27 @@
+# git リポジトリの変更を一覧表示する例（list ビュー）。
+#
+# パスは自分のリポジトリに書き換えてください。`~` は /bin/sh が展開します。
+# 各行を `名前|状態` の形に整形してから `split = "|"` で 2 列に分けています。
+# 表示する行数は `rows` が上限になるので、`head` は不要です。
+# パスが違うと空出力になり、タイルが出ません（空出力＝隠す、のため）。
+# そのときは詳細ビューの「現在の出力」を確かめてください。
+
+id = "git-status"
+name = "git 変更"
+summary = "作業ツリーの変更ファイル"
+icon = "folder-download-symbolic"
+category = "info"
+size = [380, 220]
+refresh = 30
+hidden_when_idle = true # 変更が無ければ隠れる
+
+[source]
+kind = "command"
+run = "git -C ~/dev/myrepo status --porcelain | awk '{ print $2 \"|\" $1 }'"
+
+[view]
+kind = "list"
+rows = 6
+split = "|"
+label_column = 0
+value_column = 1
