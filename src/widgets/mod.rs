@@ -24,8 +24,7 @@ pub mod note;
 pub mod plugin;
 pub mod processes;
 pub mod system;
-pub mod systeminfo;
-pub mod temperature;
+// `systeminfo` と `temperature` はプラグイン (plugins/builtin/*.toml) へ移行済み。
 pub mod weather;
 pub mod world_clock;
 
@@ -214,7 +213,6 @@ pub fn descriptors() -> &'static [WidgetDescriptor] {
         diskio::DESCRIPTOR,
         network::DESCRIPTOR,
         load::DESCRIPTOR,
-        temperature::DESCRIPTOR,
         battery::DESCRIPTOR,
         processes::DESCRIPTOR,
         system::DESCRIPTOR,
@@ -226,7 +224,6 @@ pub fn descriptors() -> &'static [WidgetDescriptor] {
         date::DESCRIPTOR,
         // 情報
         weather::DESCRIPTOR,
-        systeminfo::DESCRIPTOR,
         media::DESCRIPTOR,
         heading::DESCRIPTOR,
         note::DESCRIPTOR,
@@ -238,14 +235,23 @@ pub fn descriptors() -> &'static [WidgetDescriptor] {
 
 /// Looks up a widget kind.
 ///
-/// The plugin kind is deliberately kept out of [`descriptors`]: a plugin tile
-/// always belongs to one user written definition, so it is added from the
-/// plugin section of the picker rather than from the catalogue itself.
+/// A kind may name a Rust widget, or a plugin definition: `kind = "temperature"`
+/// draws the same tile as the generic plugin kind configured with that id, so a
+/// layout written before a widget moved into the plugin system keeps working.
+/// The plugin kind itself stays out of [`descriptors`] — a plugin always
+/// belongs to one user written definition, so it is added from the plugin
+/// section of the picker rather than from the catalogue itself.
 pub fn find(kind: &str) -> Option<&'static WidgetDescriptor> {
     if kind == plugin::KIND {
         return Some(&plugin::DESCRIPTOR);
     }
-    descriptors().iter().find(|d| d.kind == kind)
+    if let Some(descriptor) = descriptors().iter().find(|d| d.kind == kind) {
+        return Some(descriptor);
+    }
+    if crate::plugin::find(kind).is_some() {
+        return Some(&plugin::DESCRIPTOR);
+    }
+    None
 }
 
 /// Builds the tile for `instance`, or a self explaining placeholder when the
@@ -256,10 +262,25 @@ pub fn build_tile(
     get_config: Rc<dyn Fn() -> serde_json::Value>,
     set_hidden: Rc<dyn Fn(bool)>,
 ) -> gtk::Widget {
+    // A plugin used directly as a kind keeps its id in the kind, not in the
+    // settings: normalise that here, so a layout from before the widget moved
+    // into the plugin system builds the very same tile.
+    let mut config = instance.config.clone();
+    if instance.kind != plugin::KIND && crate::plugin::find(&instance.kind).is_some() {
+        if !config.is_object() {
+            config = serde_json::json!({});
+        }
+        if let Some(object) = config.as_object_mut() {
+            object
+                .entry("plugin".to_owned())
+                .or_insert_with(|| serde_json::json!(instance.kind));
+        }
+    }
+
     let context = WidgetContext::new(
         instance.id.clone(),
         instance.kind.clone(),
-        instance.config.clone(),
+        config,
         set_config,
         get_config,
         set_hidden,

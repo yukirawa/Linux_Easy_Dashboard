@@ -18,7 +18,7 @@ use libadwaita::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::graphics::{self, Bounds, Ink};
-use crate::plugin::{self, Plugin, View};
+use crate::plugin::{self, Plugin, Setting, SettingKind, View};
 use crate::util::History;
 
 use super::{Category, DetailPage, Readout, TileHeader, WidgetContext, WidgetDescriptor};
@@ -49,6 +49,9 @@ struct PluginConfig {
     /// saved or reloaded bumps it, which is how a tile notices that it has to be
     /// rebuilt — without this, editing a plugin would only show up on restart.
     revision: u64,
+    /// Per tile overrides for the definition's `[view]` fields, written by the
+    /// settings the definition exposes.
+    settings: serde_json::Value,
 }
 
 /// Writes a fresh sample into the tile. One of these is built per view, so the
@@ -80,7 +83,9 @@ fn build(context: &WidgetContext) -> Result<gtk::Widget> {
             )
         })?
         .plugin;
-    let definition = Rc::new(definition);
+    // Settings saved for this tile override the definition's `[view]` fields.
+    let overrides = config.settings.as_object().cloned().unwrap_or_default();
+    let definition = Rc::new(definition.with_overrides(&overrides));
 
     let ink = Ink::new();
     let header = TileHeader::new(&definition.icon, &definition.name);
@@ -103,6 +108,8 @@ fn build(context: &WidgetContext) -> Result<gtk::Widget> {
         View::Ring { .. } => ring_view(&root, &definition, &ink),
         View::Sparkline { history, .. } => sparkline_view(&root, &definition, &ink, *history),
         View::List { rows, .. } => list_view(&root, &definition, *rows),
+        View::Facts { rows, .. } => facts_view(&root, &definition, *rows, &header, &caption),
+        View::Bars { rows, .. } => bars_view(&root, &definition, *rows, &ink, &header, &caption),
         View::Text { wrap } => text_view(&root, &definition, *wrap),
     };
 
@@ -110,40 +117,48 @@ fn build(context: &WidgetContext) -> Result<gtk::Widget> {
     let root = ink.wrap(&root);
 
     let revision = config.revision;
-    let pending = Rc::new(Cell::new(false));
-    let context_for_tick = context.clone();
-    super::tick_seconds(&root, definition.refresh as u32, move || {
-        // A definition that changed on disk means a different tile: patching the
-        // revision asks the canvas to build this one again.
-        let current = plugin::revision();
-        if current != revision {
-            context_for_tick.set("revision", serde_json::json!(current));
-            return;
-        }
-        if pending.get() {
-            return;
-        }
-        pending.set(true);
+    match definition.source.clone() {
+        Some(source) => {
+            let pending = Rc::new(Cell::new(false));
+            let context_for_tick = context.clone();
+            let definition_for_tick = Rc::clone(&definition);
+            super::tick_seconds(&root, definition.refresh as u32, move || {
+                // A definition that changed on disk means a different tile:
+                // patching the revision asks the canvas to build this one again.
+                let current = plugin::revision();
+                if current != revision {
+                    context_for_tick.set("revision", serde_json::json!(current));
+                    return;
+                }
+                if pending.get() {
+                    return;
+                }
+                pending.set(true);
 
-        let source = definition.source.clone();
-        let hidden_when_idle = definition.hidden_when_idle;
-        let apply = Rc::clone(&apply);
-        let pending = Rc::clone(&pending);
-        let context = context_for_tick.clone();
-        glib::MainContext::default().spawn_local(async move {
-            // `sample` runs a command or reads a file, so it never touches the
-            // main thread.
-            let outcome = match gio::spawn_blocking(move || plugin::sample(&source)).await {
-                Ok(result) => result,
-                Err(_) => Err("取得処理が異常終了しました".to_owned()),
-            };
-            if hidden_when_idle {
-                context.set_hidden(outcome.as_ref().is_ok_and(|text| text.trim().is_empty()));
-            }
-            apply(outcome);
-            pending.set(false);
-        });
-    });
+                let source = source.clone();
+                let hidden_when_idle = definition_for_tick.hidden_when_idle;
+                let apply = Rc::clone(&apply);
+                let pending = Rc::clone(&pending);
+                let context = context_for_tick.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    // `sample` runs a command or reads a file, so it never
+                    // touches the main thread.
+                    let outcome = match gio::spawn_blocking(move || plugin::sample(&source)).await {
+                        Ok(result) => result,
+                        Err(_) => Err("取得処理が異常終了しました".to_owned()),
+                    };
+                    if hidden_when_idle {
+                        context
+                            .set_hidden(outcome.as_ref().is_ok_and(|text| text.trim().is_empty()));
+                    }
+                    apply(outcome);
+                    pending.set(false);
+                });
+            });
+        }
+        // Nothing to poll: a view that draws its own content renders once.
+        None => apply(Ok(String::new())),
+    }
 
     Ok(root.upcast())
 }
@@ -450,11 +465,204 @@ fn first_line(text: &str) -> String {
         .map_or_else(|| "—".to_owned(), |line| line.trim().to_owned())
 }
 
+/// Key/value rows: what a machine summary is made of.
+///
+/// The first row's value (the distribution, for the machine summary) is shown in
+/// the header, because it is the most descriptive thing the tile has.
+fn facts_view(
+    root: &gtk::Box,
+    definition: &Rc<Plugin>,
+    rows: usize,
+    header: &TileHeader,
+    caption: &gtk::Label,
+) -> Apply {
+    let mut lines = Vec::with_capacity(rows);
+    for _ in 0..rows {
+        let name = gtk::Label::new(None);
+        name.add_css_class("caption");
+        name.add_css_class("dim-label");
+        name.set_xalign(0.0);
+        name.set_width_chars(9);
+        name.set_halign(gtk::Align::Start);
+
+        let value = gtk::Label::new(None);
+        value.add_css_class("caption");
+        value.add_css_class("edm-mono");
+        value.set_xalign(1.0);
+        value.set_hexpand(true);
+        value.set_ellipsize(gtk::pango::EllipsizeMode::End);
+
+        let line = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        line.append(&name);
+        line.append(&value);
+        root.append(&line);
+        lines.push((line, name, value));
+    }
+
+    // The definition's summary has nothing to add here; the rows speak for
+    // themselves. It is only borrowed to report an error.
+    caption.set_visible(false);
+    let definition = Rc::clone(definition);
+    let header = header.clone();
+    let caption = caption.clone();
+    Rc::new(move |sample| {
+        let text = match sample {
+            Ok(text) => text,
+            Err(message) => {
+                header.set_value("—");
+                caption.set_label(&message);
+                caption.set_visible(true);
+                for (line, _, _) in &lines {
+                    line.set_visible(false);
+                }
+                return;
+            }
+        };
+        let parsed = plugin::rows_of(&definition, &text);
+        for (index, (line, name, value)) in lines.iter().enumerate() {
+            match parsed.get(index) {
+                Some((label, shown)) => {
+                    line.set_visible(true);
+                    name.set_label(label);
+                    value.set_label(shown);
+                }
+                None => line.set_visible(false),
+            }
+        }
+        header.set_value(parsed.first().map_or("—", |(_, value)| value.as_str()));
+    })
+}
+
+/// One labelled bar per row, for readings that come in groups.
+fn bars_view(
+    root: &gtk::Box,
+    definition: &Rc<Plugin>,
+    rows: usize,
+    ink: &Ink,
+    header: &TileHeader,
+    caption: &gtk::Label,
+) -> Apply {
+    struct Bar {
+        root: gtk::Box,
+        name: gtk::Label,
+        value: gtk::Label,
+        area: gtk::DrawingArea,
+        fraction: Rc<Cell<f64>>,
+    }
+
+    let ink = ink.clone();
+    let mut bars = Vec::with_capacity(rows);
+    for _ in 0..rows {
+        let name = gtk::Label::new(None);
+        name.add_css_class("caption");
+        name.set_xalign(0.0);
+        name.set_hexpand(true);
+        name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+
+        let value = gtk::Label::new(None);
+        value.add_css_class("caption");
+        value.add_css_class("edm-mono");
+        value.set_xalign(1.0);
+
+        let fraction = Rc::new(Cell::new(0.0));
+        let area = gtk::DrawingArea::new();
+        area.set_content_height(6);
+        area.set_hexpand(true);
+        area.set_valign(gtk::Align::Center);
+        {
+            let fraction = Rc::clone(&fraction);
+            let ink = ink.clone();
+            area.set_draw_func(move |_, cr, width, height| {
+                graphics::prepare(cr);
+                let fraction = fraction.get();
+                graphics::bar(
+                    cr,
+                    Bounds::new(0.0, f64::from(height) / 2.0 - 3.0, f64::from(width), 6.0),
+                    fraction,
+                    &ink.alpha(0.12),
+                    &ink.level(fraction),
+                );
+            });
+        }
+
+        let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        top.append(&name);
+        top.append(&value);
+
+        let bar_root = gtk::Box::new(gtk::Orientation::Vertical, 3);
+        bar_root.append(&top);
+        bar_root.append(&area);
+        root.append(&bar_root);
+        bars.push(Bar {
+            root: bar_root,
+            name,
+            value,
+            area,
+            fraction,
+        });
+    }
+
+    caption.set_visible(false);
+    let definition = Rc::clone(definition);
+    let header = header.clone();
+    let caption = caption.clone();
+    Rc::new(move |sample| {
+        let text = match sample {
+            Ok(text) => text,
+            Err(message) => {
+                header.set_value("—");
+                caption.set_label(&message);
+                caption.set_visible(true);
+                for bar in &bars {
+                    bar.root.set_visible(false);
+                }
+                return;
+            }
+        };
+
+        let parsed = plugin::bar_rows(&definition, &text);
+        if parsed.is_empty() {
+            let empty = match &definition.view {
+                View::Bars { empty, .. } if !empty.trim().is_empty() => empty.clone(),
+                _ => "—".to_owned(),
+            };
+            header.set_value("—");
+            caption.set_label(&empty);
+            caption.set_visible(true);
+            for bar in &bars {
+                bar.root.set_visible(false);
+            }
+            return;
+        }
+        caption.set_visible(false);
+
+        let mut peak = f64::NEG_INFINITY;
+        for (index, bar) in bars.iter().enumerate() {
+            match parsed.get(index) {
+                Some((label, value)) => {
+                    bar.root.set_visible(true);
+                    bar.name.set_label(label);
+                    bar.value
+                        .set_label(&plugin::format_value(&definition, *value));
+                    bar.fraction.set(plugin::fraction(&definition, *value));
+                    peak = peak.max(*value);
+                    bar.area.queue_draw();
+                }
+                None => bar.root.set_visible(false),
+            }
+        }
+        // The header carries the peak: what a glance wants to know.
+        if peak.is_finite() {
+            header.set_value(&plugin::format_value(&definition, peak));
+        }
+    })
+}
+
 // -- detail ---------------------------------------------------------------
 
 fn detail(context: &WidgetContext) -> Result<gtk::Widget> {
     let config: PluginConfig = context.config();
-    let page = DetailPage::new("プラグイン", "定義");
+    let page = DetailPage::new("ウィジェット", "このタイルの設定");
 
     let Some(loaded) = plugin::find(&config.plugin) else {
         page.note(&format!(
@@ -465,29 +673,48 @@ fn detail(context: &WidgetContext) -> Result<gtk::Widget> {
         return Ok(page.finish());
     };
     let definition = loaded.plugin.clone();
+    let overrides = config.settings.as_object().cloned().unwrap_or_default();
+    let effective = definition.with_overrides(&overrides);
 
     page.fact("ID", &definition.id);
     page.fact("名前", &definition.name);
     page.fact("カテゴリ", definition.category.label());
     page.fact("更新間隔", &format!("{} 秒", definition.refresh));
-    page.fact("取得元", &source_label(&definition));
-    page.fact("定義ファイル", &loaded.path.display().to_string());
+    if let Some(source) = &definition.source {
+        page.fact("取得元", &source_label(source));
+    }
     if definition.hidden_when_idle {
         page.fact("空のとき", "タイルを隠す");
+    }
+    if !definition.author.is_empty() {
+        page.fact("作者", &definition.author);
+    }
+    if !definition.version.is_empty() {
+        page.fact("バージョン", &definition.version);
+    }
+    if !definition.license.is_empty() {
+        page.fact("ライセンス", &definition.license);
+    }
+    if !definition.homepage.is_empty() {
+        page.fact("ホームページ", &definition.homepage);
+    }
+    if loaded.builtin {
+        page.fact("種類", "組み込みウィジェット");
+    } else {
+        page.fact("定義ファイル", &loaded.path.display().to_string());
     }
 
     // The current sample: fetched in the background, because sampling runs a
     // command and the dialog must not wait for it.
-    let preview = gtk::Label::new(Some("取得中…"));
-    preview.add_css_class("caption");
-    preview.add_css_class("dim-label");
-    preview.add_css_class("edm-code");
-    preview.set_xalign(0.0);
-    preview.set_wrap(true);
-    preview.set_selectable(true);
-    page.custom(&preview);
-    {
-        let source = definition.source.clone();
+    if let Some(source) = definition.source.clone() {
+        let preview = gtk::Label::new(Some("取得中…"));
+        preview.add_css_class("caption");
+        preview.add_css_class("dim-label");
+        preview.add_css_class("edm-code");
+        preview.set_xalign(0.0);
+        preview.set_wrap(true);
+        preview.set_selectable(true);
+        page.custom(&preview);
         glib::MainContext::default().spawn_local(async move {
             let outcome = match gio::spawn_blocking(move || plugin::sample(&source)).await {
                 Ok(result) => result,
@@ -505,13 +732,103 @@ fn detail(context: &WidgetContext) -> Result<gtk::Widget> {
         });
     }
 
-    page.custom(&editor(context, &definition));
+    // What the definition lets the user change about this one tile.
+    if !definition.settings.is_empty() {
+        let group = libadwaita::PreferencesGroup::new();
+        group.set_title("このタイル");
+        for setting in &definition.settings {
+            group.add(&setting_row(context, &effective, setting));
+        }
+        page.custom(&group);
+    }
+
+    // A built-in definition lives in the binary, so there is nothing to edit;
+    // only the user's own files get the editor.
+    if loaded.builtin {
+        page.note("これはアプリに同梱されたウィジェットです。定義は plugins/builtin/ にあります。");
+    } else {
+        page.custom(&editor(context, &definition));
+    }
     Ok(page.finish())
 }
 
+/// Writes one per tile setting, merging it into whatever is already saved.
+fn write_setting(context: &WidgetContext, key: &str, value: serde_json::Value) {
+    let mut settings = context.current::<PluginConfig>().settings;
+    if !settings.is_object() {
+        settings = serde_json::json!({});
+    }
+    if let Some(object) = settings.as_object_mut() {
+        object.insert(key.to_owned(), value);
+    }
+    context.set("settings", settings);
+}
+
+/// One row for a [`Setting`], editing a `[view]` field of this tile.
+fn setting_row(context: &WidgetContext, effective: &Plugin, setting: &Setting) -> gtk::Widget {
+    let current = serde_json::to_value(&effective.view).unwrap_or(serde_json::Value::Null);
+    let value = current
+        .get(&setting.key)
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let key = setting.key.clone();
+
+    match setting.kind {
+        SettingKind::Bool => {
+            let row = libadwaita::SwitchRow::builder()
+                .title(&setting.title)
+                .active(value.as_bool().unwrap_or(false))
+                .build();
+            let context = context.clone();
+            row.connect_active_notify(move |row| {
+                write_setting(&context, &key, serde_json::Value::Bool(row.is_active()));
+            });
+            row.upcast()
+        }
+        SettingKind::Int => {
+            let min = setting.min.unwrap_or(0.0);
+            let max = setting.max.unwrap_or(100.0).max(min);
+            let adjustment =
+                gtk::Adjustment::new(value.as_f64().unwrap_or(min), min, max, 1.0, 5.0, 0.0);
+            let row = libadwaita::SpinRow::builder()
+                .title(&setting.title)
+                .adjustment(&adjustment)
+                .build();
+            let context = context.clone();
+            row.connect_value_notify(move |row| {
+                write_setting(
+                    &context,
+                    &key,
+                    serde_json::json!(row.value().round() as i64),
+                );
+            });
+            row.upcast()
+        }
+        SettingKind::Text => {
+            let text = value.as_str().unwrap_or("");
+            let patch_context = context.clone();
+            let patch_key = key.clone();
+            super::text_row(context, &setting.title, text, move |text| {
+                let mut settings = patch_context.current::<PluginConfig>().settings;
+                if !settings.is_object() {
+                    settings = serde_json::json!({});
+                }
+                if let Some(object) = settings.as_object_mut() {
+                    object.insert(
+                        patch_key.clone(),
+                        serde_json::Value::String(text.to_owned()),
+                    );
+                }
+                serde_json::json!({ "settings": settings })
+            })
+            .upcast()
+        }
+    }
+}
+
 /// What the definition reads, in one line.
-fn source_label(definition: &Plugin) -> String {
-    match &definition.source {
+fn source_label(source: &plugin::Source) -> String {
+    match source {
         plugin::Source::Command { run, timeout_secs } => {
             format!("コマンド ({timeout_secs} 秒): {run}")
         }

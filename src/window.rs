@@ -246,7 +246,16 @@ impl DashboardWindow {
     /// can be adjusted at once.
     fn add_pick(self: &Rc<Self>, pick: Pick) {
         let added = match pick {
-            Pick::Builtin(kind) => self.canvas.add_kind(kind),
+            Pick::Builtin(kind) => match crate::plugin::find(kind) {
+                // A kind that is really a plugin definition takes its size from
+                // that definition, not from the generic widget.
+                Some(loaded) => self.canvas.add_kind_with(
+                    kind,
+                    serde_json::json!({}),
+                    Some((loaded.plugin.size.0, loaded.plugin.size.1)),
+                ),
+                None => self.canvas.add_kind(kind),
+            },
             Pick::Plugin(id) => {
                 // The size belongs to the definition, not to the generic widget.
                 let size = crate::plugin::find(&id)
@@ -654,9 +663,10 @@ impl AddButton {
             self.list.remove(&child);
         }
 
+        let catalogue = crate::plugin::catalogue();
         let mut sections = Vec::new();
         for category in Category::ALL {
-            let rows = category
+            let mut rows: Vec<(adw::ActionRow, String)> = category
                 .widgets()
                 .into_iter()
                 .map(|descriptor| {
@@ -668,15 +678,32 @@ impl AddButton {
                     )
                 })
                 .collect();
+            // A built-in widget is a plugin too, so it belongs in its category
+            // rather than in the plugin section.
+            rows.extend(
+                catalogue
+                    .iter()
+                    .filter(|loaded| {
+                        loaded.builtin && category_of(loaded.plugin.category) == category
+                    })
+                    .map(|loaded| {
+                        row(
+                            &loaded.plugin.name,
+                            &loaded.plugin.summary,
+                            &loaded.plugin.icon,
+                            &loaded.plugin.id,
+                        )
+                    }),
+            );
             sections.push(Section {
                 heading: section_header(category.label()),
                 rows,
             });
         }
 
-        let plugins = crate::plugin::catalogue();
-        if !plugins.is_empty() {
-            let rows = plugins
+        let user: Vec<_> = catalogue.iter().filter(|loaded| !loaded.builtin).collect();
+        if !user.is_empty() {
+            let rows = user
                 .iter()
                 .map(|loaded| {
                     row(
@@ -700,6 +727,16 @@ impl AddButton {
             }
         }
         *self.sections.borrow_mut() = sections;
+    }
+}
+
+/// Which picker section a plugin definition asks for.
+fn category_of(category: crate::plugin::Category) -> Category {
+    match category {
+        crate::plugin::Category::System => Category::System,
+        crate::plugin::Category::Time => Category::Time,
+        crate::plugin::Category::Info => Category::Info,
+        crate::plugin::Category::Apps => Category::Apps,
     }
 }
 

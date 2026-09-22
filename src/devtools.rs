@@ -75,28 +75,38 @@ pub fn build_gallery(canvas: &crate::canvas::Canvas, page: usize) {
     const COLUMNS: i32 = 3;
 
     canvas.clear();
-    let start = page * PER_PAGE;
-    let page_widgets: Vec<_> = crate::widgets::descriptors()
+
+    // The catalogue is the Rust registry plus the built-in plugin definitions,
+    // so a widget that has moved into the plugin system still shows up here.
+    let mut catalogue: Vec<(String, (i32, i32))> = crate::widgets::descriptors()
         .iter()
-        .skip(start)
-        .take(PER_PAGE)
+        .map(|descriptor| (descriptor.kind.to_owned(), descriptor.default_size))
         .collect();
+    catalogue.extend(
+        crate::plugin::catalogue()
+            .iter()
+            .filter(|loaded| loaded.builtin)
+            .map(|loaded| (loaded.plugin.id.clone(), loaded.plugin.size)),
+    );
+
+    let start = page * PER_PAGE;
+    let page_widgets: Vec<&(String, (i32, i32))> =
+        catalogue.iter().skip(start).take(PER_PAGE).collect();
 
     if page_widgets.is_empty() {
         warn!("ギャラリー {page} ページ目は空です");
         return;
     }
 
-    for (index, descriptor) in page_widgets.iter().enumerate() {
-        let (width, height) = descriptor.default_size;
+    for (index, (kind, (width, height))) in page_widgets.iter().enumerate() {
         let column = index as i32 % COLUMNS;
         let row = index as i32 / COLUMNS;
         let instance = crate::config::WidgetInstance::new(
-            descriptor.kind,
+            kind.as_str(),
             24 + column * 400,
             24 + row * 340,
-            width,
-            height,
+            *width,
+            *height,
         );
         canvas.add_instance(&instance);
     }
@@ -106,7 +116,7 @@ pub fn build_gallery(canvas: &crate::canvas::Canvas, page: usize) {
         page,
         page_widgets
             .iter()
-            .map(|descriptor| descriptor.kind)
+            .map(|(kind, _)| kind.as_str())
             .collect::<Vec<_>>()
     );
 }
@@ -135,9 +145,10 @@ pub fn schedule_screenshot(
     });
 }
 
-/// Adds plugin tiles by definition id (`EDM_DEV_PLUGIN="a,b"`).
+/// Adds user written plugin tiles by definition id (`EDM_DEV_PLUGIN="a,b"`).
 ///
-/// Plugins never show up in the gallery, so this is how they get looked at.
+/// Only the built-in definitions show up in the gallery, so this is how the
+/// user's own get looked at.
 pub fn add_plugins(canvas: &crate::canvas::Canvas, spec: &str) {
     for id in spec.split(',').map(str::trim).filter(|id| !id.is_empty()) {
         let size =

@@ -116,6 +116,7 @@ fn show_about(app: &adw::Application) {
         .version(VERSION)
         .comments("ウィジェットを自由に配置できる、ネイティブ GTK4 のダッシュボード。")
         .copyright("© 2026 Yukirawa")
+        .license_type(gtk::License::MitX11)
         .build();
 
     match app.active_window() {

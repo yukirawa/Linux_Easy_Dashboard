@@ -18,7 +18,7 @@ use std::process::{Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use log::{info, warn};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::config::APP_DIR;
 
@@ -83,7 +83,7 @@ impl Source {
 /// The numeric views ([`View::Readout`], [`View::Bar`], [`View::Ring`] and
 /// [`View::Sparkline`]) all carry the same number settings inline, so a hand
 /// written file can put `scale`, `min`, `unit` … straight under `[view]`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum View {
     /// A big number or short text with a caption.
@@ -129,6 +129,41 @@ pub enum View {
         #[serde(default = "default_value_column")]
         value_column: usize,
     },
+    /// Read-only key/value rows, e.g. a machine summary.
+    Facts {
+        #[serde(default = "default_rows")]
+        rows: usize,
+        #[serde(default = "default_split")]
+        split: String,
+        #[serde(default)]
+        label_column: usize,
+        #[serde(default = "default_value_column")]
+        value_column: usize,
+    },
+    /// One labelled horizontal bar per row.
+    Bars {
+        #[serde(default = "default_rows")]
+        rows: usize,
+        #[serde(default = "default_split")]
+        split: String,
+        #[serde(default)]
+        label_column: usize,
+        #[serde(default = "default_value_column")]
+        value_column: usize,
+        /// Only keep rows whose label contains this, when set.
+        #[serde(default)]
+        filter: String,
+        /// `"value"` (largest first) or `"label"`; empty keeps the source order.
+        #[serde(default)]
+        sort: String,
+        #[serde(default)]
+        unit: String,
+        /// Shown when there is nothing to list, e.g. no sensor found.
+        #[serde(default)]
+        empty: String,
+        #[serde(flatten)]
+        number: Number,
+    },
     /// The raw text, as it came out of the source.
     Text {
         #[serde(default = "default_true")]
@@ -143,8 +178,9 @@ impl View {
             Self::Readout { number, .. }
             | Self::Bar { number, .. }
             | Self::Ring { number, .. }
-            | Self::Sparkline { number, .. } => Some(*number),
-            Self::List { .. } | Self::Text { .. } => None,
+            | Self::Sparkline { number, .. }
+            | Self::Bars { number, .. } => Some(*number),
+            Self::List { .. } | Self::Facts { .. } | Self::Text { .. } => None,
         }
     }
 
@@ -154,8 +190,9 @@ impl View {
             Self::Readout { unit, .. }
             | Self::Bar { unit, .. }
             | Self::Ring { unit, .. }
-            | Self::Sparkline { unit, .. } => unit,
-            Self::List { .. } | Self::Text { .. } => "",
+            | Self::Sparkline { unit, .. }
+            | Self::Bars { unit, .. } => unit,
+            Self::List { .. } | Self::Facts { .. } | Self::Text { .. } => "",
         }
     }
 
@@ -170,11 +207,23 @@ impl View {
                 *history = (*history).clamp(MIN_HISTORY, MAX_HISTORY);
                 number.normalise();
             }
-            Self::List { rows, split, .. } => {
+            Self::List { rows, split, .. } | Self::Facts { rows, split, .. } => {
                 *rows = (*rows).clamp(MIN_ROWS, MAX_ROWS);
                 if split.trim().is_empty() {
                     *split = default_split();
                 }
+            }
+            Self::Bars {
+                rows,
+                split,
+                number,
+                ..
+            } => {
+                *rows = (*rows).clamp(MIN_ROWS, MAX_ROWS);
+                if split.trim().is_empty() {
+                    *split = default_split();
+                }
+                number.normalise();
             }
             Self::Text { .. } => {}
         }
@@ -182,7 +231,7 @@ impl View {
 }
 
 /// How the number is read and shown, shared by the numeric views.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub struct Number {
     #[serde(default = "one")]
     pub scale: f64,
@@ -231,6 +280,33 @@ impl Number {
     }
 }
 
+/// One setting a definition exposes in the detail view.
+///
+/// The `key` names a `[view]` field; changing the setting overrides that field
+/// for the one tile. A definition that offers no settings is perfectly normal.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Setting {
+    /// The `[view]` key this setting overrides, e.g. `rows` or `label`.
+    pub key: String,
+    pub kind: SettingKind,
+    pub title: String,
+    /// Lower bound for an integer setting.
+    #[serde(default)]
+    pub min: Option<f64>,
+    /// Upper bound for an integer setting.
+    #[serde(default)]
+    pub max: Option<f64>,
+}
+
+/// The data type of a [`Setting`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SettingKind {
+    Bool,
+    Int,
+    Text,
+}
+
 /// One plugin definition, i.e. the contents of a `*.toml` file.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Plugin {
@@ -252,7 +328,21 @@ pub struct Plugin {
     pub refresh: u64,
     #[serde(default)]
     pub aspect: Option<f64>,
-    pub source: Source,
+    /// Free form metadata, for definitions that are shared.
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub homepage: String,
+    #[serde(default)]
+    pub license: String,
+    /// The settings the definition lets the user change in the detail view.
+    #[serde(default)]
+    pub settings: Vec<Setting>,
+    /// A view that draws something of its own (a heading, a clock) may omit it.
+    #[serde(default)]
+    pub source: Option<Source>,
     pub view: View,
 }
 
@@ -282,9 +372,51 @@ impl Plugin {
         self.aspect = self
             .aspect
             .filter(|ratio| ratio.is_finite() && *ratio > 0.0);
-        self.source.normalise()?;
+        self.author = self.author.trim().to_owned();
+        self.version = self.version.trim().to_owned();
+        self.homepage = self.homepage.trim().to_owned();
+        self.license = self.license.trim().to_owned();
+        for setting in &mut self.settings {
+            setting.key = setting.key.trim().to_owned();
+            setting.title = setting.title.trim().to_owned();
+        }
+        self.settings.retain(|setting| !setting.key.is_empty());
+        if let Some(source) = &mut self.source {
+            source.normalise()?;
+        }
         self.view.normalise();
         Ok(())
+    }
+
+    /// A copy of this definition with the instance's `overrides` applied to its
+    /// `[view]` table.
+    ///
+    /// This is how a user changes what a definition exposes — which sensors a
+    /// bar chart lists, how a readout is labelled — without editing the file. A
+    /// value that does not fit the view is dropped and the definition's own
+    /// value stays, so a broken setting can never do more than fail to apply.
+    pub fn with_overrides(&self, overrides: &serde_json::Map<String, serde_json::Value>) -> Plugin {
+        if overrides.is_empty() {
+            return self.clone();
+        }
+        let Ok(mut view) = serde_json::to_value(&self.view) else {
+            return self.clone();
+        };
+        let Some(table) = view.as_object_mut() else {
+            return self.clone();
+        };
+        for (key, value) in overrides {
+            table.insert(key.clone(), value.clone());
+        }
+        let mut plugin = self.clone();
+        match serde_json::from_value::<View>(view) {
+            Ok(overridden) => {
+                plugin.view = overridden;
+                plugin.view.normalise();
+            }
+            Err(e) => warn!("{} の設定を適用できません: {e}", self.id),
+        }
+        plugin
     }
 }
 
@@ -310,11 +442,13 @@ impl Category {
     }
 }
 
-/// A plugin that was loaded from disk.
+/// A plugin that was loaded, either from disk or from the compiled-in set.
 #[derive(Debug, Clone)]
 pub struct Loaded {
     pub plugin: Plugin,
     pub path: PathBuf,
+    /// True when the definition ships with the application (see [`BUILTIN`]).
+    pub builtin: bool,
 }
 
 /// The directory the plugin files live in, created if needed.
@@ -359,12 +493,53 @@ pub fn revision() -> u64 {
     REVISION.with(Cell::get)
 }
 
-/// Every plugin that loads, ordered by name.
+/// Widget definitions the application ships with.
+///
+/// These are ordinary plugins: the only difference is that they are compiled in
+/// instead of living in the user's `plugins/` directory. Replacing a built-in
+/// widget with a plugin is therefore a matter of writing a `.toml` here and
+/// deleting the old Rust module — the kernel itself does not change.
+const BUILTIN: &[&str] = &[
+    include_str!("../plugins/builtin/temperature.toml"),
+    include_str!("../plugins/builtin/systeminfo.toml"),
+];
+
+/// The built-in definitions, parsed. A broken one is skipped with a warning, so
+/// a typo cannot take the application down.
+fn builtin_plugins() -> Vec<Loaded> {
+    BUILTIN
+        .iter()
+        .filter_map(|text| match parse(text) {
+            Ok(plugin) => {
+                let path = PathBuf::from(format!("<builtin>/{}.{EXTENSION}", plugin.id));
+                Some(Loaded {
+                    plugin,
+                    path,
+                    builtin: true,
+                })
+            }
+            Err(message) => {
+                warn!("組み込みウィジェットを読み込めません: {message}");
+                None
+            }
+        })
+        .collect()
+}
+
+/// Built-in definitions first, then the user's own, so a definition that ships
+/// with the app cannot be shadowed by accident.
+fn load_catalogue() -> Vec<Loaded> {
+    let mut loaded = builtin_plugins();
+    loaded.extend(load_all(&directory()));
+    loaded
+}
+
+/// Every plugin that loads: the built-in ones, then the user's, by name.
 pub fn catalogue() -> Vec<Loaded> {
     CATALOGUE.with(|cell| {
         let mut slot = cell.borrow_mut();
         if slot.is_none() {
-            *slot = Some(load_all(&directory()));
+            *slot = Some(load_catalogue());
         }
         match slot.as_ref() {
             Some(loaded) => loaded.clone(),
@@ -380,11 +555,20 @@ pub fn find(id: &str) -> Option<Loaded> {
         .find(|loaded| loaded.plugin.id == id)
 }
 
-/// Re-reads the directory and returns how many plugins loaded. Files that do not
-/// parse are skipped with a warning.
+/// Whether `id` names a definition that ships with the application.
+pub fn is_builtin(id: &str) -> bool {
+    catalogue()
+        .iter()
+        .any(|loaded| loaded.builtin && loaded.plugin.id == id)
+}
+
+/// Re-reads the directory and returns how many user plugins loaded. Files that
+/// do not parse are skipped with a warning.
 pub fn reload() -> usize {
-    let loaded = load_all(&directory());
-    let count = loaded.len();
+    let mut loaded = builtin_plugins();
+    let user = load_all(&directory());
+    let count = user.len();
+    loaded.extend(user);
     CATALOGUE.with(|cell| *cell.borrow_mut() = Some(loaded));
     REVISION.with(|cell| cell.set(cell.get().wrapping_add(1)));
     info!("プラグインを {count} 件読み込みました");
@@ -401,6 +585,9 @@ pub fn read_source(id: &str) -> Option<String> {
 /// Text that does not parse is still written — the user has to be able to fix it
 /// in the editor — and the parse error is returned so the UI can show it.
 pub fn write_source(id: &str, text: &str) -> Result<(), String> {
+    if is_builtin(id) {
+        return Err("組み込みウィジェットは編集できません".to_owned());
+    }
     let result = write_source_in(&directory(), id, text);
     reload();
     result
@@ -408,6 +595,9 @@ pub fn write_source(id: &str, text: &str) -> Result<(), String> {
 
 /// Deletes the file and reloads.
 pub fn remove(id: &str) -> Result<(), String> {
+    if is_builtin(id) {
+        return Err("組み込みウィジェットは削除できません".to_owned());
+    }
     let result = remove_in(&directory(), id);
     reload();
     result
@@ -473,9 +663,9 @@ fn check_id(id: &str) -> Result<(), String> {
     }
     if !id
         .chars()
-        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_')
     {
-        return Err(format!("id に使える文字は [a-z0-9-] だけです: {id}"));
+        return Err(format!("id に使える文字は [a-z0-9_-] だけです: {id}"));
     }
     Ok(())
 }
@@ -517,7 +707,11 @@ fn load_all(dir: &Path) -> Vec<Loaded> {
             }
         };
         match parse(&text) {
-            Ok(plugin) => loaded.push(Loaded { plugin, path }),
+            Ok(plugin) => loaded.push(Loaded {
+                plugin,
+                path,
+                builtin: false,
+            }),
             Err(message) => warn!("{} を読み込めません: {message}", path.display()),
         }
     }
@@ -682,28 +876,88 @@ pub fn format_value(plugin: &Plugin, value: f64) -> String {
 /// The number of rows the *tile* shows is fixed when it is built; the view asks
 /// for exactly that many.
 pub fn rows_of(plugin: &Plugin, text: &str) -> Vec<(String, String)> {
-    let View::List {
-        rows,
-        split,
-        label_column,
-        value_column,
-    } = &plugin.view
-    else {
+    let Some((rows, ..)) = row_settings(plugin) else {
+        return Vec::new();
+    };
+    split_lines(plugin, text).into_iter().take(rows).collect()
+}
+
+/// The rows of a `bars` view: a label and the number found in its value column.
+///
+/// A row whose value has no number in it is dropped, so a command that prints a
+/// stray line cannot turn into an empty bar. The definition's `filter` and
+/// `sort` are applied before the list is cut to `rows`.
+pub fn bar_rows(plugin: &Plugin, text: &str) -> Vec<(String, f64)> {
+    let Some((rows, ..)) = row_settings(plugin) else {
+        return Vec::new();
+    };
+    let (filter, sort) = match &plugin.view {
+        View::Bars { filter, sort, .. } => (filter.trim().to_owned(), sort.trim().to_owned()),
+        _ => return Vec::new(),
+    };
+    let number = plugin.view.number().unwrap_or_default();
+    let mut values: Vec<(String, f64)> = split_lines(plugin, text)
+        .into_iter()
+        .filter(|(label, _)| filter.is_empty() || label.contains(&filter))
+        .filter_map(|(label, value)| {
+            let raw = first_number(&value)?;
+            Some((label, raw * number.scale + number.offset))
+        })
+        .collect();
+    match sort.as_str() {
+        "value" => values.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0))),
+        "label" => values.sort_by(|a, b| a.0.cmp(&b.0)),
+        _ => {}
+    }
+    values.truncate(rows);
+    values
+}
+
+/// The `rows` / `split` / `label_column` / `value_column` of a row oriented
+/// view, or `None` when the view has no rows at all.
+fn row_settings(plugin: &Plugin) -> Option<(usize, String, usize, usize)> {
+    match &plugin.view {
+        View::List {
+            rows,
+            split,
+            label_column,
+            value_column,
+        }
+        | View::Facts {
+            rows,
+            split,
+            label_column,
+            value_column,
+        }
+        | View::Bars {
+            rows,
+            split,
+            label_column,
+            value_column,
+            ..
+        } => Some((*rows, split.clone(), *label_column, *value_column)),
+        _ => None,
+    }
+}
+
+/// Every non-blank line split into a `(label, value)` pair, without limiting the
+/// count: the callers decide how many they want.
+fn split_lines(plugin: &Plugin, text: &str) -> Vec<(String, String)> {
+    let Some((_, split, label_column, value_column)) = row_settings(plugin) else {
         return Vec::new();
     };
 
     text.lines()
         .filter(|line| !line.trim().is_empty())
-        .take(*rows)
         .map(|line| {
             let fields: Vec<&str> = if split.is_empty() {
                 vec![line]
             } else {
                 line.split(split.as_str()).collect()
             };
-            let label = fields.get(*label_column).copied().unwrap_or(line).trim();
+            let label = fields.get(label_column).copied().unwrap_or(line).trim();
             let value = fields
-                .get(*value_column)
+                .get(value_column)
                 .copied()
                 .filter(|value| *value != label)
                 .unwrap_or("")
@@ -895,9 +1149,10 @@ value_column = 0
         assert_eq!(plugin.summary, "scaling_cur_freq を読む");
         assert_eq!(plugin.refresh, 2);
         assert!(plugin.hidden_when_idle);
-        assert!(
-            matches!(&plugin.source, Source::File { path } if path.contains("scaling_cur_freq"))
-        );
+        assert!(matches!(
+            &plugin.source,
+            Some(Source::File { path }) if path.contains("scaling_cur_freq")
+        ));
         assert!(matches!(plugin.view, View::Ring { .. }));
         assert_eq!(plugin.view.unit(), "MHz");
 
@@ -947,8 +1202,8 @@ value_column = 0
             "id = \"a\"\nid = \"b\"\n",
             "id = \"Bad Id\"\nname = \"x\"\n[source]\nkind = \"command\"\nrun = \"true\"\n[view]\nkind = \"text\"\n",
             "id = \"a\"\nname = \"x\"\n[source]\nkind = \"command\"\nrun = \"true\"\n[view]\nkind = \"gauge\"\n",
-            "id = \"a\"\nname = \"x\"\n[view]\nkind = \"text\"\n",
             "id = \"a\"\nname = \"x\"\n[source]\nkind = \"watson\"\n[view]\nkind = \"text\"\n",
+            "id = \"a\"\nname = \"x\"\n[view]\nkind = \"gauge\"\n",
             "",
         ];
         for case in cases {
@@ -956,6 +1211,32 @@ value_column = 0
             // still say no instead of panicking.
             assert!(parse(case).is_err(), "this must not load: {case:?}");
         }
+    }
+
+    #[test]
+    fn a_definition_may_leave_out_the_source() {
+        // A view that draws something of its own needs no value, so `[source]`
+        // is optional (this is what lets a heading or a clock be a plugin).
+        let plugin = parse("id = \"a\"\nname = \"見出し\"\n[view]\nkind = \"text\"\n")
+            .expect("a source-less definition must parse");
+        assert!(plugin.source.is_none());
+    }
+
+    #[test]
+    fn settings_override_the_view_but_never_break_it() {
+        let plugin = def(LIST);
+        let mut overrides = serde_json::Map::new();
+        overrides.insert("rows".to_owned(), serde_json::json!(1));
+        let narrowed = plugin.with_overrides(&overrides);
+        assert!(matches!(&narrowed.view, View::List { rows: 1, .. }));
+        // The definition itself is untouched.
+        assert!(matches!(&plugin.view, View::List { rows: 3, .. }));
+
+        // A value that does not fit is ignored, leaving the definition's own.
+        let mut broken = serde_json::Map::new();
+        broken.insert("rows".to_owned(), serde_json::json!("many"));
+        let unchanged = plugin.with_overrides(&broken);
+        assert!(matches!(&unchanged.view, View::List { rows: 3, .. }));
     }
 
     #[test]
@@ -1085,6 +1366,40 @@ value_column = 0
     #[test]
     fn the_machine_has_a_plugin_directory() {
         assert!(directory().ends_with(PLUGIN_DIR));
+    }
+
+    #[test]
+    fn the_built_in_definitions_all_load() {
+        let builtins = builtin_plugins();
+        assert_eq!(
+            builtins.len(),
+            BUILTIN.len(),
+            "組み込み定義のどれかが読み込めません"
+        );
+        let ids: Vec<&str> = builtins
+            .iter()
+            .map(|loaded| loaded.plugin.id.as_str())
+            .collect();
+        // The migrated widgets kept their kind, so an old layout still resolves.
+        assert!(ids.contains(&"temperature"));
+        assert!(ids.contains(&"systeminfo"));
+        for loaded in &builtins {
+            assert!(loaded.builtin);
+            assert!(!loaded.plugin.name.is_empty());
+            assert!(find(&loaded.plugin.id).is_some());
+        }
+    }
+
+    #[test]
+    fn a_bars_view_filters_and_sorts_before_it_is_cut_to_rows() {
+        let plugin = parse(
+            "id = \"t\"\nname = \"t\"\n[source]\nkind = \"command\"\nrun = \"true\"\n\
+             [view]\nkind = \"bars\"\nrows = 2\nsplit = \"\\t\"\nsort = \"value\"\n",
+        )
+        .expect("the test definition must parse");
+        // Deliberately out of order: the two largest survive, largest first.
+        let rows = bar_rows(&plugin, "a\t10\nb\t40\nc\t30\n");
+        assert_eq!(rows, vec![("b".to_owned(), 40.0), ("c".to_owned(), 30.0)]);
     }
 
     fn temp_dir(name: &str) -> PathBuf {

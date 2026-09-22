@@ -1,16 +1,14 @@
-//! `/sys` readers: batteries and temperature sensors.
+//! `/sys` readers: batteries.
 //!
-//! Both are optional hardware. Every function returns an empty list when the
-//! machine has none, and widgets render a quiet "not available" state instead
-//! of failing.
+//! Optional hardware. Every function returns an empty list when the machine has
+//! none, and widgets render a quiet "not available" state instead of failing.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use log::debug;
 
 const POWER_SUPPLY: &str = "/sys/class/power_supply";
-const HWMON: &str = "/sys/class/hwmon";
 
 /// Charge state reported by the firmware.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,79 +111,6 @@ fn estimate_minutes(path: &Path, capacity: f64, status: BatteryStatus) -> Option
     (minutes.is_finite() && minutes >= 0.0).then_some(minutes as u64)
 }
 
-/// A temperature sensor from `/sys/class/hwmon`.
-#[derive(Debug, Clone)]
-pub struct Sensor {
-    /// Driver name, e.g. `coretemp`.
-    pub chip: String,
-    /// Human readable label, e.g. `Package id 0`.
-    pub label: String,
-    pub celsius: f64,
-}
-
-/// All plausible temperature sensors, hottest first.
-pub fn temperature_sensors() -> Vec<Sensor> {
-    let Ok(entries) = fs::read_dir(HWMON) else {
-        return Vec::new();
-    };
-
-    let mut sensors = Vec::new();
-    for path in entries.flatten().map(|entry| entry.path()) {
-        let chip = read_trimmed(&path.join("name")).unwrap_or_else(|| "hwmon".to_owned());
-        for input in files_named(&path, "temp", "_input") {
-            let Some(celsius) = read_number(&input).map(|raw| raw / 1000.0) else {
-                continue;
-            };
-            // Sensors can report 0 or nonsense when the hardware is idle or
-            // unsupported; keep only what looks like a real temperature.
-            if !(1.0..150.0).contains(&celsius) {
-                continue;
-            }
-            let label_path = input.with_file_name(
-                input
-                    .file_stem()
-                    .map(|stem| format!("{}_label", stem.to_string_lossy()))
-                    .unwrap_or_default(),
-            );
-            let label = read_trimmed(&label_path).unwrap_or_else(|| chip.clone());
-            sensors.push(Sensor {
-                chip: chip.clone(),
-                label,
-                celsius,
-            });
-        }
-    }
-
-    sensors.sort_by(|a, b| {
-        b.celsius
-            .partial_cmp(&a.celsius)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    sensors
-}
-
-/// Files in `dir` matching `temp*_input`, sorted by their numeric index.
-fn files_named(dir: &Path, prefix: &str, suffix: &str) -> Vec<PathBuf> {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut paths: Vec<(u32, PathBuf)> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter_map(|path| {
-            let name = path.file_name()?.to_string_lossy().into_owned();
-            let index = name
-                .strip_prefix(prefix)?
-                .strip_suffix(suffix)?
-                .parse::<u32>()
-                .ok()?;
-            Some((index, path))
-        })
-        .collect();
-    paths.sort_by_key(|(index, _)| *index);
-    paths.into_iter().map(|(_, path)| path).collect()
-}
-
 fn read_trimmed(path: &Path) -> Option<String> {
     fs::read_to_string(path)
         .ok()
@@ -211,14 +136,6 @@ mod tests {
     fn batteries_look_sane() {
         for battery in batteries() {
             assert!((0.0..=100.0).contains(&battery.capacity));
-        }
-    }
-
-    #[test]
-    fn sensors_look_sane() {
-        for sensor in temperature_sensors() {
-            assert!((1.0..150.0).contains(&sensor.celsius));
-            assert!(!sensor.chip.is_empty());
         }
     }
 }
