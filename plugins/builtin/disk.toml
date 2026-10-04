@@ -1,0 +1,23 @@
+id = "disk"
+name = "ディスク"
+summary = "マウントごとの使用量リング"
+icon = "drive-harddisk-symbolic"
+category = "system"
+size = [320, 220]
+refresh = 5
+
+[view]
+kind = "disk"
+mounts = ""
+max_rows = 4
+show_free = true
+
+[[settings]]
+key = "mounts"
+kind = "text"
+title = "表示するマウント（カンマ区切り）"
+
+[[settings]]
+key = "show_free"
+kind = "bool"
+title = "空き容量を表示"

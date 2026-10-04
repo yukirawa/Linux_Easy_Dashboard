@@ -1,0 +1,22 @@
+id = "battery"
+name = "バッテリー"
+summary = "充電リング・状態・残り時間"
+icon = "battery-symbolic"
+category = "system"
+size = [300, 220]
+refresh = 5
+
+[view]
+kind = "battery"
+show_time = true
+warn_by_charge = true
+
+[[settings]]
+key = "show_time"
+kind = "bool"
+title = "残り時間を表示"
+
+[[settings]]
+key = "warn_by_charge"
+kind = "bool"
+title = "残量が少ないとき警告色"

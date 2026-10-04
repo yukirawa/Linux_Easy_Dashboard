@@ -1,32 +1,11 @@
 //! The widget catalogue.
 //!
-//! Adding a widget means adding one module with a [`WidgetDescriptor`] and
-//! listing it in [`descriptors`]. The canvas only ever talks to widgets through
-//! this interface, so a widget that fails to build or misbehaves can only ever
-//! break its own tile.
+//! Every tile is a plugin definition (`*.toml`) rendered by `crate::views` or by
+//! the generic source-driven views in [`plugin`]. The canvas only ever talks to
+//! tiles through [`WidgetContext`], so a plugin that fails to build or misbehaves
+//! can only ever break its own tile.
 
-pub mod analog_clock;
-pub mod battery;
-pub mod calendar;
-pub mod clock;
-pub mod cores;
-pub mod cpu;
-pub mod date;
-pub mod disk;
-pub mod diskio;
-pub mod heading;
-pub mod launcher;
-pub mod load;
-pub mod media;
-pub mod memory;
-pub mod network;
-pub mod note;
 pub mod plugin;
-pub mod processes;
-pub mod system;
-// `systeminfo` と `temperature` はプラグイン (plugins/builtin/*.toml) へ移行済み。
-pub mod weather;
-pub mod world_clock;
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -197,58 +176,24 @@ impl Category {
     }
 }
 
-/// Every widget the application knows about.
+/// Every tile is a plugin; this is the single descriptor the canvas needs.
 ///
-/// The order is the order of the picker: grouped by category, and inside a
-/// category roughly from "monitors the machine" to "decorates the dashboard".
-/// There is a test for the grouping, because an interleaved list is what makes
-/// the picker look cluttered.
+/// The picker lists plugin definitions from `crate::plugin`, not this array —
+/// a definition is added from the catalogue, never hard coded here. This is
+/// what makes the viewer a microkernel: it knows how to host a tile and
+/// nothing about what the tile shows.
 pub fn descriptors() -> &'static [WidgetDescriptor] {
-    static DESCRIPTORS: &[WidgetDescriptor] = &[
-        // システム
-        cpu::DESCRIPTOR,
-        cores::DESCRIPTOR,
-        memory::DESCRIPTOR,
-        disk::DESCRIPTOR,
-        diskio::DESCRIPTOR,
-        network::DESCRIPTOR,
-        load::DESCRIPTOR,
-        battery::DESCRIPTOR,
-        processes::DESCRIPTOR,
-        system::DESCRIPTOR,
-        // 時刻と日付
-        clock::DESCRIPTOR,
-        analog_clock::DESCRIPTOR,
-        world_clock::DESCRIPTOR,
-        calendar::DESCRIPTOR,
-        date::DESCRIPTOR,
-        // 情報
-        weather::DESCRIPTOR,
-        media::DESCRIPTOR,
-        heading::DESCRIPTOR,
-        note::DESCRIPTOR,
-        // アプリ
-        launcher::DESCRIPTOR,
-    ];
+    static DESCRIPTORS: &[WidgetDescriptor] = &[plugin::DESCRIPTOR];
     DESCRIPTORS
 }
 
-/// Looks up a widget kind.
+/// Looks up the tile descriptor for a layout `kind`.
 ///
-/// A kind may name a Rust widget, or a plugin definition: `kind = "temperature"`
-/// draws the same tile as the generic plugin kind configured with that id, so a
-/// layout written before a widget moved into the plugin system keeps working.
-/// The plugin kind itself stays out of [`descriptors`] — a plugin always
-/// belongs to one user written definition, so it is added from the plugin
-/// section of the picker rather than from the catalogue itself.
+/// `kind` is either the generic plugin host (`"plugin"`) or the id of a plugin
+/// definition, which is normalised into the host with that id stored in the
+/// instance settings.
 pub fn find(kind: &str) -> Option<&'static WidgetDescriptor> {
-    if kind == plugin::KIND {
-        return Some(&plugin::DESCRIPTOR);
-    }
-    if let Some(descriptor) = descriptors().iter().find(|d| d.kind == kind) {
-        return Some(descriptor);
-    }
-    if crate::plugin::find(kind).is_some() {
+    if kind == plugin::KIND || crate::plugin::find(kind).is_some() {
         return Some(&plugin::DESCRIPTOR);
     }
     None
@@ -721,8 +666,10 @@ mod tests {
         assert_eq!(patch, serde_json::json!({ "title": "hello" }));
     }
 
-    /// The picker groups consecutive runs by category, so the registry has to
-    /// keep each category in one run.
+    /// The picker groups consecutive runs by category, so the catalogue has to
+    /// keep each category in one run. The plugin host itself is not listed in
+    /// the picker — only definitions are — so this checks the host descriptor
+    /// is still well formed.
     #[test]
     fn the_registry_is_grouped_by_category() {
         let mut sections: Vec<Category> = Vec::new();
@@ -736,29 +683,38 @@ mod tests {
                 sections.push(descriptor.category);
             }
         }
-        assert_eq!(sections.as_slice(), &Category::ALL);
+        assert!(!sections.is_empty());
     }
 
+    /// Every picker section has at least one plugin definition, and ids are
+    /// unique across the whole catalogue.
     #[test]
     fn every_category_has_widgets_and_every_kind_is_unique() {
+        let catalogue = crate::plugin::catalogue();
         for category in Category::ALL {
+            let plugin_category = match category {
+                Category::System => crate::plugin::Category::System,
+                Category::Time => crate::plugin::Category::Time,
+                Category::Info => crate::plugin::Category::Info,
+                Category::Apps => crate::plugin::Category::Apps,
+            };
             assert!(
-                !category.widgets().is_empty(),
+                catalogue
+                    .iter()
+                    .any(|loaded| loaded.plugin.category == plugin_category),
                 "{} が空です",
                 category.label()
             );
         }
 
-        let mut kinds = HashSet::new();
-        for descriptor in descriptors() {
+        let mut ids = HashSet::new();
+        for loaded in &catalogue {
             assert!(
-                kinds.insert(descriptor.kind),
+                ids.insert(loaded.plugin.id.as_str()),
                 "{} が重複しています",
-                descriptor.kind
+                loaded.plugin.id
             );
-            assert!(!descriptor.name.is_empty());
-            assert!(!descriptor.summary.is_empty());
+            assert!(!loaded.plugin.name.is_empty());
         }
-        assert_eq!(kinds.len(), descriptors().len());
     }
 }

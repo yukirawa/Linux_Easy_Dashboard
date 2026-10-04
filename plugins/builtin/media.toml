@@ -1,0 +1,35 @@
+id = "media"
+name = "メディアプレイヤー"
+summary = "再生中のトラックと操作（MPRIS）"
+icon = "multimedia-player-symbolic"
+category = "info"
+size = [360, 220]
+refresh = 2
+hidden_when_idle = true
+
+[view]
+kind = "media"
+player = ""
+only_while_playing = true
+show_controls = true
+show_art = true
+
+[[settings]]
+key = "player"
+kind = "text"
+title = "プレイヤー名（空で自動）"
+
+[[settings]]
+key = "only_while_playing"
+kind = "bool"
+title = "再生中のみ表示"
+
+[[settings]]
+key = "show_controls"
+kind = "bool"
+title = "操作ボタンを表示"
+
+[[settings]]
+key = "show_art"
+kind = "bool"
+title = "アートワークを表示"

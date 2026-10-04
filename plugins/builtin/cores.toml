@@ -1,0 +1,17 @@
+id = "cores"
+name = "コア"
+summary = "コアごとの使用率をセルのヒートマップで"
+icon = "power-profile-performance-symbolic"
+category = "system"
+size = [320, 220]
+refresh = 1
+
+[view]
+kind = "cores"
+columns = 0
+warn_by_usage = true
+
+[[settings]]
+key = "warn_by_usage"
+kind = "bool"
+title = "高負荷を警告色で表示"

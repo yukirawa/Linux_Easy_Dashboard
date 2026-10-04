@@ -1,0 +1,43 @@
+id = "temperature"
+name = "温度"
+summary = "CPU や NVMe の温度センサー"
+icon = "temperature-symbolic"
+category = "system"
+size = [340, 220]
+refresh = 3
+
+[source]
+kind = "command"
+run = '''
+for hwmon in /sys/class/hwmon/hwmon*; do
+  [ -r "$hwmon/name" ] || continue
+  chip=$(cat "$hwmon/name" 2>/dev/null) || continue
+  for input in "$hwmon"/temp*_input; do
+    [ -r "$input" ] || continue
+    raw=$(cat "$input" 2>/dev/null) || continue
+    case "$raw" in ''|*[!0-9-]*) continue ;; esac
+    label=$(cat "${input%_input}_label" 2>/dev/null)
+    if [ -n "$label" ]; then name="$chip ($label)"; else name="$chip"; fi
+    printf '%s\t%s\n' "$name" "$((raw / 1000))"
+  done
+done
+'''
+
+[view]
+kind = "bars"
+rows = 4
+split = "\t"
+label_column = 0
+value_column = 1
+sort = "value"
+unit = "°C"
+min = 0
+max = 100
+empty = "センサーが見つかりません"
+
+[[settings]]
+key = "rows"
+kind = "int"
+title = "表示するセンサー数"
+min = 1
+max = 12

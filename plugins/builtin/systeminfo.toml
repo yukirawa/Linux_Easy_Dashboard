@@ -1,0 +1,26 @@
+id = "systeminfo"
+name = "システム情報"
+summary = "OS・カーネル・ハードウェア"
+icon = "computer-symbolic"
+category = "info"
+size = [380, 240]
+refresh = 30
+
+[source]
+kind = "command"
+run = '''
+if [ -r /etc/os-release ]; then . /etc/os-release; fi
+printf 'OS\t%s\n' "${PRETTY_NAME:-${NAME:-不明}}"
+printf 'カーネル\t%s\n' "$(uname -r)"
+printf 'ホスト\t%s\n' "$(cat /proc/sys/kernel/hostname 2>/dev/null || echo '—')"
+printf 'CPU\t%s\n' "$(sed -n 's/^model name[[:space:]]*: //p' /proc/cpuinfo 2>/dev/null | head -n1)"
+printf 'メモリ\t%s\n' "$(awk '/^MemTotal:/ { printf "%.1f GiB", $2 / 1048576 }' /proc/meminfo 2>/dev/null)"
+printf '稼働\t%s\n' "$(awk '{ d = int($1 / 86400); h = int(($1 % 86400) / 3600); m = int(($1 % 3600) / 60); if (d > 0) printf "%d日 %02d:%02d", d, h, m; else printf "%02d:%02d", h, m }' /proc/uptime 2>/dev/null)"
+'''
+
+[view]
+kind = "facts"
+rows = 8
+split = "\t"
+label_column = 0
+value_column = 1

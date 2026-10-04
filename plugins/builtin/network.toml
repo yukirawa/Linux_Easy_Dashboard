@@ -1,0 +1,22 @@
+id = "network"
+name = "ネットワーク"
+summary = "送受信速度と推移"
+icon = "network-transmit-receive-symbolic"
+category = "system"
+size = [340, 220]
+refresh = 2
+
+[view]
+kind = "network"
+interface = ""
+show_history = true
+
+[[settings]]
+key = "interface"
+kind = "text"
+title = "インターフェース（空で自動）"
+
+[[settings]]
+key = "show_history"
+kind = "bool"
+title = "推移グラフを表示"

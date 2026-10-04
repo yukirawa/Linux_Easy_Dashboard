@@ -1,0 +1,21 @@
+id = "note"
+name = "メモ"
+summary = "短いテキストを貼っておく"
+icon = "view-paged-symbolic"
+category = "info"
+size = [340, 220]
+
+[view]
+kind = "note"
+title = "メモ"
+text = ""
+
+[[settings]]
+key = "title"
+kind = "text"
+title = "タイトル"
+
+[[settings]]
+key = "text"
+kind = "text"
+title = "本文"

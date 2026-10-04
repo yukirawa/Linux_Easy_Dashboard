@@ -2,18 +2,18 @@
 //!
 //! Three environment variables are understood:
 //!
-//! * `EDM_SCREENSHOT=/path/to.png` logs the tile geometry, checks that every
+//! * `LED_SCREENSHOT=/path/to.png` logs the tile geometry, checks that every
 //!   widget's detail view builds, renders the window to a PNG and closes it.
-//! * `EDM_DEV_DRAG="x,y,dx,dy"` switches to edit mode and drags the tile under
+//! * `LED_DEV_DRAG="x,y,dx,dy"` switches to edit mode and drags the tile under
 //!   `(x, y)` by `(dx, dy)`, which exercises move/snap without a pointer.
-//! * `EDM_DEV_GALLERY=<page>` replaces the layout with one page of the widget
+//! * `LED_DEV_GALLERY=<page>` replaces the layout with one page of the widget
 //!   catalogue, which is how the whole set gets smoke tested.
-//! * `EDM_DEV_PATCH="kind:key=json"` sends a settings patch through the same
+//! * `LED_DEV_PATCH="kind:key=json"` sends a settings patch through the same
 //!   path the detail view uses, e.g. `clock:hour24=false`.
-//! * `EDM_DEV_PLUGIN="id,id"` adds one tile per plugin definition, which is how
+//! * `LED_DEV_PLUGIN="id,id"` adds one tile per plugin definition, which is how
 //!   user written widgets get looked at (they are not in the gallery).
-//! * `EDM_DEV_DETAIL=kind` opens that widget's detail dialog and, with
-//!   `EDM_DEV_TYPE=text`, types into its editor, which is how the settings UI
+//! * `LED_DEV_DETAIL=kind` opens that widget's detail dialog and, with
+//!   `LED_DEV_TYPE=text`, types into its editor, which is how the settings UI
 //!   gets exercised without a pointer and a keyboard. Separate several values
 //!   with `|` to type them one after another, with the save debounce in between.
 //!
@@ -30,26 +30,26 @@ use log::{info, warn};
 
 /// Applies the development hooks requested through the environment.
 pub fn install_from_env(window: &crate::window::DashboardWindow) {
-    let gallery = std::env::var("EDM_DEV_GALLERY")
+    let gallery = std::env::var("LED_DEV_GALLERY")
         .ok()
         .map(|value| value.parse::<usize>().unwrap_or(0));
     if let Some(page) = gallery {
         build_gallery(window.canvas(), page);
     }
-    if let Some(spec) = std::env::var_os("EDM_DEV_DRAG") {
+    if let Some(spec) = std::env::var_os("LED_DEV_DRAG") {
         simulate_drag(window.canvas(), &spec.to_string_lossy());
     }
-    if let Some(spec) = std::env::var_os("EDM_DEV_PATCH") {
+    if let Some(spec) = std::env::var_os("LED_DEV_PATCH") {
         simulate_patch(window.canvas(), &spec.to_string_lossy());
     }
-    if let Some(kind) = std::env::var_os("EDM_DEV_DETAIL") {
-        let text = std::env::var("EDM_DEV_TYPE").ok();
+    if let Some(kind) = std::env::var_os("LED_DEV_DETAIL") {
+        let text = std::env::var("LED_DEV_TYPE").ok();
         simulate_detail(window, &kind.to_string_lossy(), text.as_deref());
     }
-    if let Some(spec) = std::env::var_os("EDM_DEV_PLUGIN") {
+    if let Some(spec) = std::env::var_os("LED_DEV_PLUGIN") {
         add_plugins(window.canvas(), &spec.to_string_lossy());
     }
-    if let Some(path) = std::env::var_os("EDM_SCREENSHOT") {
+    if let Some(path) = std::env::var_os("LED_SCREENSHOT") {
         // The gallery includes the weather widget, whose first fetch needs a
         // network round trip before there is anything to look at.
         let delay = if gallery.is_some() {
@@ -145,7 +145,7 @@ pub fn schedule_screenshot(
     });
 }
 
-/// Adds user written plugin tiles by definition id (`EDM_DEV_PLUGIN="a,b"`).
+/// Adds user written plugin tiles by definition id (`LED_DEV_PLUGIN="a,b"`).
 ///
 /// Only the built-in definitions show up in the gallery, so this is how the
 /// user's own get looked at.
@@ -175,7 +175,7 @@ pub fn simulate_drag(canvas: &crate::canvas::Canvas, spec: &str) {
     let [x, y, dx, dy] = match numbers[..] {
         [x, y, dx, dy] => [x, y, dx, dy],
         _ => {
-            warn!("EDM_DEV_DRAG の形式が不正です: {spec}");
+            warn!("LED_DEV_DRAG の形式が不正です: {spec}");
             return;
         }
     };
@@ -216,15 +216,15 @@ pub fn simulate_patch(canvas: &crate::canvas::Canvas, spec: &str) {
         return;
     }
     let Some((kind, assignment)) = spec.split_once(':') else {
-        warn!("EDM_DEV_PATCH の形式が不正です: {spec}");
+        warn!("LED_DEV_PATCH の形式が不正です: {spec}");
         return;
     };
     let Some((key, value)) = assignment.split_once('=') else {
-        warn!("EDM_DEV_PATCH に '=' がありません: {spec}");
+        warn!("LED_DEV_PATCH に '=' がありません: {spec}");
         return;
     };
     let Ok(value) = serde_json::from_str::<serde_json::Value>(value) else {
-        warn!("EDM_DEV_PATCH の値が JSON ではありません: {value}");
+        warn!("LED_DEV_PATCH の値が JSON ではありません: {value}");
         return;
     };
 

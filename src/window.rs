@@ -14,7 +14,7 @@ use crate::canvas::Canvas;
 use crate::config::{AppConfig, CanvasSettings, ConfigStore, WindowSettings};
 use crate::ui;
 use crate::ui::debounce::Debounce;
-use crate::widgets::{self, Category};
+use crate::widgets::Category;
 
 /// Delay between the last change and writing the layout to disk. Long enough
 /// to coalesce a drag, short enough to survive a crash.
@@ -245,28 +245,15 @@ impl DashboardWindow {
     /// Adds whatever the picker was asked for and switches to edit mode so it
     /// can be adjusted at once.
     fn add_pick(self: &Rc<Self>, pick: Pick) {
-        let added = match pick {
-            Pick::Builtin(kind) => match crate::plugin::find(kind) {
-                // A kind that is really a plugin definition takes its size from
-                // that definition, not from the generic widget.
-                Some(loaded) => self.canvas.add_kind_with(
-                    kind,
-                    serde_json::json!({}),
-                    Some((loaded.plugin.size.0, loaded.plugin.size.1)),
-                ),
-                None => self.canvas.add_kind(kind),
-            },
-            Pick::Plugin(id) => {
-                // The size belongs to the definition, not to the generic widget.
-                let size = crate::plugin::find(&id)
-                    .map(|loaded| (loaded.plugin.size.0, loaded.plugin.size.1));
-                self.canvas.add_kind_with(
-                    crate::widgets::plugin::KIND,
-                    serde_json::json!({ "plugin": id }),
-                    size,
-                )
-            }
-        };
+        let Pick::Plugin(id) = pick;
+        // The size belongs to the definition, not to the generic host.
+        let size = crate::plugin::find(&id)
+            .map(|loaded| (loaded.plugin.size.0, loaded.plugin.size.1));
+        let added = self.canvas.add_kind_with(
+            crate::widgets::plugin::KIND,
+            serde_json::json!({ "plugin": id }),
+            size,
+        );
         if added.is_some() {
             self.edit_button.set_active(true);
         }
@@ -530,11 +517,8 @@ fn build_menu_button() -> gtk::MenuButton {
 /// Set once the window exists; before that the picker has nowhere to deliver to.
 type PickHandler = Rc<RefCell<Option<Box<dyn Fn(Pick)>>>>;
 
-/// What the picker was asked to add.
+/// What the picker was asked to add: a plugin definition, by id.
 enum Pick {
-    /// A widget from the built-in catalogue.
-    Builtin(&'static str),
-    /// A user written plugin, by definition id.
     Plugin(String),
 }
 
@@ -600,15 +584,12 @@ impl AddButton {
             let handler = Rc::clone(&handler);
             move |_, row| {
                 let name = row.widget_name().to_string();
-                let pick = match name.strip_prefix("plugin:") {
-                    Some(id) => Pick::Plugin(id.to_owned()),
-                    None => match widgets::find(&name) {
-                        Some(descriptor) => Pick::Builtin(descriptor.kind),
-                        None => return,
-                    },
+                let id = match name.strip_prefix("plugin:") {
+                    Some(id) => id.to_owned(),
+                    None => return,
                 };
                 if let Some(handler) = handler.borrow().as_ref() {
-                    handler(pick);
+                    handler(Pick::Plugin(id));
                 }
             }
         });
@@ -658,6 +639,10 @@ impl AddButton {
     }
 
     /// (Re)builds the catalogue. Called again after a plugin reload.
+    ///
+    /// The picker is nothing but the plugin catalogue: built-in definitions in
+    /// their category, user definitions under 「プラグイン」. The viewer never
+    /// hard codes a widget.
     fn fill(&self) {
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
@@ -666,35 +651,23 @@ impl AddButton {
         let catalogue = crate::plugin::catalogue();
         let mut sections = Vec::new();
         for category in Category::ALL {
-            let mut rows: Vec<(adw::ActionRow, String)> = category
-                .widgets()
-                .into_iter()
-                .map(|descriptor| {
+            let rows: Vec<(adw::ActionRow, String)> = catalogue
+                .iter()
+                .filter(|loaded| {
+                    loaded.builtin && category_of(loaded.plugin.category) == category
+                })
+                .map(|loaded| {
                     row(
-                        descriptor.name,
-                        descriptor.summary,
-                        descriptor.icon,
-                        descriptor.kind,
+                        &loaded.plugin.name,
+                        &loaded.plugin.summary,
+                        &loaded.plugin.icon,
+                        &format!("plugin:{}", loaded.plugin.id),
                     )
                 })
                 .collect();
-            // A built-in widget is a plugin too, so it belongs in its category
-            // rather than in the plugin section.
-            rows.extend(
-                catalogue
-                    .iter()
-                    .filter(|loaded| {
-                        loaded.builtin && category_of(loaded.plugin.category) == category
-                    })
-                    .map(|loaded| {
-                        row(
-                            &loaded.plugin.name,
-                            &loaded.plugin.summary,
-                            &loaded.plugin.icon,
-                            &loaded.plugin.id,
-                        )
-                    }),
-            );
+            if rows.is_empty() {
+                continue;
+            }
             sections.push(Section {
                 heading: section_header(category.label()),
                 rows,

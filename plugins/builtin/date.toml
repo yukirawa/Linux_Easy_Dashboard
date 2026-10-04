@@ -1,0 +1,22 @@
+id = "date"
+name = "今日"
+summary = "大きな日付と年の進み具合"
+icon = "x-office-calendar-symbolic"
+category = "time"
+size = [320, 220]
+refresh = 60
+
+[view]
+kind = "date"
+show_week = true
+show_progress = true
+
+[[settings]]
+key = "show_week"
+kind = "bool"
+title = "ISO 週番号を表示"
+
+[[settings]]
+key = "show_progress"
+kind = "bool"
+title = "年の進み具合を表示"

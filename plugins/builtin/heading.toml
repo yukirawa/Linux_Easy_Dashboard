@@ -1,0 +1,27 @@
+id = "heading"
+name = "見出し"
+summary = "セクション名などのテキスト＋アクセントバー"
+icon = "format-text-heading-symbolic"
+category = "info"
+size = [320, 120]
+
+[view]
+kind = "heading"
+title = "見出し"
+subtitle = ""
+accent = true
+
+[[settings]]
+key = "title"
+kind = "text"
+title = "タイトル"
+
+[[settings]]
+key = "subtitle"
+kind = "text"
+title = "サブタイトル"
+
+[[settings]]
+key = "accent"
+kind = "bool"
+title = "アクセントバーを表示"

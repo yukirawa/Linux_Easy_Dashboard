@@ -1,14 +1,13 @@
-//! Weather widget, backed by Open-Meteo.
+//! `weather` view family. See `src/views/mod.rs`.
 //!
-//! * The place name is resolved to coordinates once and cached in the widget's
-//!   own settings, so later refreshes are a single request.
+//! Weather tile, backed by Open-Meteo.
+//!
+//! * The place name is resolved to coordinates once and cached in the tile's
+//!   own state, so later refreshes are a single request.
 //! * Requests run on a worker thread (`gio::spawn_blocking`) and the UI is
 //!   updated on the main context, so a slow or offline network never freezes
 //!   the dashboard.
 //! * Everything degrades to a readable message; nothing here panics or blocks.
-//!
-//! This is the only widget that talks to the network, and it only does so when
-//! the user places it. Open-Meteo needs no API key and stores no account.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -17,58 +16,33 @@ use anyhow::Result;
 use gtk::cairo::Context;
 use gtk::prelude::*;
 use log::debug;
-use serde::{Deserialize, Serialize};
 
 use crate::graphics::{self, Bounds, Ink, WeatherGlyph};
 use crate::net;
+use crate::plugin::{Plugin, View};
 use crate::util::human_percent;
-
-use super::{Category, DetailPage, Spin, TileHeader, WidgetContext, WidgetDescriptor};
-
-pub const KIND: &str = "weather";
-
-pub const DESCRIPTOR: WidgetDescriptor = WidgetDescriptor {
-    kind: KIND,
-    name: "天気",
-    summary: "現在の天気と数日間の予報",
-    icon: "weather-clear-symbolic",
-    category: Category::Info,
-    default_size: (400, 260),
-    aspect: None,
-    build,
-    detail,
-};
+use crate::widgets::{TileHeader, WidgetContext, tick_seconds};
 
 /// How often the forecast is refreshed.
 const REFRESH_SECONDS: u32 = 900;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-struct WeatherConfig {
+/// The `[view]` options this tile draws with, taken from the definition.
+struct Options {
     /// Free text place name, resolved through Open-Meteo's geocoder.
     location: String,
-    /// Resolved coordinates and the canonical place name, cached here so the
-    /// geocoder is only asked when the name changes.
-    latitude: Option<f64>,
-    longitude: Option<f64>,
-    place: Option<String>,
     /// Fahrenheit instead of Celsius.
     fahrenheit: bool,
     /// Number of forecast days next to the current conditions.
     days: usize,
 }
 
-impl Default for WeatherConfig {
-    fn default() -> Self {
-        Self {
-            location: "Tokyo".to_owned(),
-            latitude: None,
-            longitude: None,
-            place: None,
-            fahrenheit: false,
-            days: 4,
-        }
-    }
+/// Resolved coordinates and the canonical place name, cached so the geocoder is
+/// only asked once per tile.
+#[derive(Debug, Clone)]
+struct Geo {
+    latitude: f64,
+    longitude: f64,
+    place: String,
 }
 
 /// What the widget currently knows, shared with the drawing closure.
@@ -77,92 +51,12 @@ struct Conditions {
     glyph: Option<WeatherGlyph>,
 }
 
-fn build(context: &WidgetContext) -> Result<gtk::Widget> {
-    let config: WeatherConfig = context.config();
-    let conditions = Rc::new(RefCell::new(Conditions::default()));
-    let ink = Ink::new();
-
-    let header = TileHeader::new(DESCRIPTOR.icon, "天気");
-    header.set_value(
-        &config
-            .place
-            .clone()
-            .unwrap_or_else(|| config.location.clone()),
-    );
-
-    let glyph_area = gtk::DrawingArea::new();
-    glyph_area.set_content_width(62);
-    glyph_area.set_content_height(62);
-    glyph_area.set_valign(gtk::Align::Center);
-    {
-        let conditions = conditions.clone();
-        let ink = ink.clone();
-        glyph_area.set_draw_func(move |_, cr, width, height| {
-            let conditions = conditions.borrow().clone();
-            draw_glyph(cr, f64::from(width), f64::from(height), &conditions, &ink);
-        });
-    }
-
-    let value = gtk::Label::new(None);
-    value.add_css_class("edm-readout");
-    value.set_xalign(0.0);
-
-    let detail = gtk::Label::new(None);
-    detail.add_css_class("caption");
-    detail.add_css_class("dim-label");
-    detail.set_xalign(0.0);
-    detail.set_wrap(true);
-    detail.set_ellipsize(gtk::pango::EllipsizeMode::End);
-
-    let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    text.set_valign(gtk::Align::Center);
-    text.set_hexpand(true);
-    text.append(&value);
-    text.append(&detail);
-
-    let current = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    current.set_vexpand(true);
-    current.set_valign(gtk::Align::Center);
-    current.append(&glyph_area);
-    current.append(&text);
-
-    let forecast = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    forecast.set_homogeneous(true);
-    forecast.set_halign(gtk::Align::Fill);
-
-    let root = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    root.set_vexpand(true);
-    root.append(&header.root);
-    root.append(&current);
-    root.append(&forecast);
-    let root = ink.wrap(&root);
-
-    // Weather is fetched on demand: immediately, then every 15 minutes while
-    // the tile is on screen.
-    let state = Rc::new(State {
-        context: context.clone(),
-        config,
-        conditions,
-        ink,
-        header,
-        value,
-        detail,
-        forecast,
-        glyph_area,
-        pending: Cell::new(false),
-    });
-
-    let state_for_tick = state.clone();
-    super::tick_seconds(&root, REFRESH_SECONDS, move || state_for_tick.refresh());
-
-    Ok(root.upcast())
-}
-
 /// The live widget state. Kept in one place so refresh, network callbacks and
 /// the drawing closure stay in sync.
 struct State {
-    context: WidgetContext,
-    config: WeatherConfig,
+    config: Options,
+    /// Geocoded coordinates for `config.location`, filled in on first refresh.
+    geo: Rc<RefCell<Option<Geo>>>,
     conditions: Rc<RefCell<Conditions>>,
     ink: Ink,
     header: TileHeader,
@@ -183,9 +77,9 @@ impl State {
         }
         self.pending.set(true);
 
-        match (self.config.latitude, self.config.longitude) {
-            (Some(latitude), Some(longitude)) => self.fetch_forecast(latitude, longitude),
-            _ => self.geocode(),
+        match self.geo.borrow().clone() {
+            Some(geo) => self.fetch_forecast(geo.latitude, geo.longitude),
+            None => self.geocode(),
         }
     }
 
@@ -201,24 +95,16 @@ impl State {
             net::encode_query(&location)
         );
         let state = self.clone();
-        net::fetch_json(url.clone(), move |result| {
-            // Names are resolved as they are typed, so replies can overtake one
-            // another. An answer for a name the user has moved on from is dropped.
-            if state.current_location() != location {
-                debug!("天気: 「{location}」はもう設定されていないため無視します");
-                return;
-            }
-            match result {
-                Ok(json) => state.apply_geocode(json),
-                Err(message) => {
-                    net::report(&url, &message);
-                    state.fail(&format!("場所を特定できません: {message}"));
-                }
+        net::fetch_json(url.clone(), move |result| match result {
+            Ok(json) => state.apply_geocode(json),
+            Err(message) => {
+                net::report(&url, &message);
+                state.fail(&format!("場所を特定できません: {message}"));
             }
         });
     }
 
-    /// Stores the coordinates, which also triggers the canvas to persist them.
+    /// Stores the coordinates in the tile's cache, then asks for the forecast.
     fn apply_geocode(self: &Rc<Self>, json: serde_json::Value) {
         let Some(first) = json["results"]
             .as_array()
@@ -238,13 +124,11 @@ impl State {
             .as_str()
             .unwrap_or(&self.config.location)
             .to_owned();
-        // One patch, not three: every patch rebuilds the tile, and each rebuild
-        // asks for the forecast again.
-        self.context.update(serde_json::json!({
-            "latitude": latitude,
-            "longitude": longitude,
-            "place": place,
-        }));
+        *self.geo.borrow_mut() = Some(Geo {
+            latitude,
+            longitude,
+            place,
+        });
         self.pending.set(false);
         self.fetch_forecast(latitude, longitude);
     }
@@ -261,41 +145,17 @@ impl State {
              &current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m\
              &daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max\
              &timezone=auto&forecast_days={}{unit}",
-            self.config.days.clamp(1, 7)
+            self.config.days
         );
 
         let state = self.clone();
-        net::fetch_json(url.clone(), move |result| {
-            // Same reasoning as above: a reply that no longer matches the
-            // settings it was asked for must not overwrite the newer ones.
-            if !state.still_current(latitude, longitude) {
-                debug!("天気: 古い設定への応答を無視します");
-                return;
-            }
-            match result {
-                Ok(json) => state.apply_forecast(json),
-                Err(message) => {
-                    net::report(&url, &message);
-                    state.fail(&message);
-                }
+        net::fetch_json(url.clone(), move |result| match result {
+            Ok(json) => state.apply_forecast(json),
+            Err(message) => {
+                net::report(&url, &message);
+                state.fail(&message);
             }
         });
-    }
-
-    /// The place name the widget is configured with right now.
-    fn current_location(&self) -> String {
-        let live: WeatherConfig = self.context.current();
-        live.location.trim().to_owned()
-    }
-
-    /// Whether the settings a forecast was requested for are still the ones in
-    /// force, i.e. whether applying the reply would describe the current widget.
-    fn still_current(&self, latitude: f64, longitude: f64) -> bool {
-        let live: WeatherConfig = self.context.current();
-        live.latitude == Some(latitude)
-            && live.longitude == Some(longitude)
-            && live.days.clamp(1, 7) == self.config.days.clamp(1, 7)
-            && live.fahrenheit == self.config.fahrenheit
     }
 
     fn apply_forecast(self: &Rc<Self>, json: serde_json::Value) {
@@ -328,6 +188,7 @@ impl State {
             "{} · {apparent} · {humidity} · {wind}",
             describe(code)
         ));
+        self.header.set_value(&self.place_label());
 
         self.update_forecast(&json["daily"]);
         self.glyph_area.queue_draw();
@@ -399,15 +260,19 @@ impl State {
         *self.conditions.borrow_mut() = Conditions::default();
         self.value.set_label("—");
         self.detail.set_label(message);
-        self.header.set_value(
-            &self
-                .config
-                .place
-                .clone()
-                .unwrap_or_else(|| self.config.location.clone()),
-        );
+        self.header.set_value(&self.place_label());
         self.glyph_area.queue_draw();
         self.pending.set(false);
+    }
+
+    /// The canonical place name once the geocoder has answered, else the one
+    /// the definition asked for.
+    fn place_label(&self) -> String {
+        self.geo
+            .borrow()
+            .as_ref()
+            .map(|geo| geo.place.clone())
+            .unwrap_or_else(|| self.config.location.clone())
     }
 
     fn format_temperature(&self, celsius: f64) -> String {
@@ -485,57 +350,111 @@ fn weekday_label(date: &str) -> String {
         .map_or_else(|_| date.to_owned(), |text| text.to_string())
 }
 
-fn detail(context: &WidgetContext) -> Result<gtk::Widget> {
-    let config: WeatherConfig = context.config();
-    let page = DetailPage::new("現在の天気", "設定");
+pub fn weather(definition: &Plugin, context: &WidgetContext) -> Result<gtk::Widget> {
+    let config = match &definition.view {
+        View::Weather {
+            location,
+            fahrenheit,
+            days,
+        } => Options {
+            location: location.trim().to_owned(),
+            fahrenheit: *fahrenheit,
+            days: (*days).clamp(1, 7),
+        },
+        _ => unreachable!("weather called with the wrong view"),
+    };
+    let _ = context;
 
-    match &config.place {
-        Some(place) => page.fact("場所", place),
-        None => page.note("場所を入力すると座標を調べて天気を取得します。"),
-    }
-    if let (Some(latitude), Some(longitude)) = (config.latitude, config.longitude) {
-        page.fact("座標", &format!("{latitude:.3}, {longitude:.3}"));
+    // Without a place name there is nothing to ask the geocoder for; say so
+    // instead of showing an empty tile.
+    if config.location.is_empty() {
+        let hint = gtk::Label::new(Some(
+            "場所が設定されていません。定義の location に都市名を設定してください。",
+        ));
+        hint.add_css_class("caption");
+        hint.add_css_class("dim-label");
+        hint.set_wrap(true);
+        hint.set_xalign(0.0);
+        hint.set_valign(gtk::Align::Center);
+        hint.set_vexpand(true);
+        return Ok(hint.upcast());
     }
 
-    // Changing the name invalidates the cached coordinates, otherwise the tile
-    // would keep showing the weather of the place it already resolved.
-    page.text(context, "場所 (都市名)", &config.location, |text| {
-        serde_json::json!({
-            "location": text.trim(),
-            "latitude": null,
-            "longitude": null,
-            "place": null,
-        })
+    let conditions = Rc::new(RefCell::new(Conditions::default()));
+    let ink = Ink::new();
+
+    let icon = if definition.icon.trim().is_empty() {
+        "weather-clear-symbolic".to_owned()
+    } else {
+        definition.icon.clone()
+    };
+    let header = TileHeader::new(&icon, "天気");
+    header.set_value(&config.location);
+
+    let glyph_area = gtk::DrawingArea::new();
+    glyph_area.set_content_width(62);
+    glyph_area.set_content_height(62);
+    glyph_area.set_valign(gtk::Align::Center);
+    {
+        let conditions = conditions.clone();
+        let ink = ink.clone();
+        glyph_area.set_draw_func(move |_, cr, width, height| {
+            let conditions = conditions.borrow().clone();
+            draw_glyph(cr, f64::from(width), f64::from(height), &conditions, &ink);
+        });
+    }
+
+    let value = gtk::Label::new(None);
+    value.add_css_class("edm-readout");
+    value.set_xalign(0.0);
+
+    let detail = gtk::Label::new(None);
+    detail.add_css_class("caption");
+    detail.add_css_class("dim-label");
+    detail.set_xalign(0.0);
+    detail.set_wrap(true);
+    detail.set_ellipsize(gtk::pango::EllipsizeMode::End);
+
+    let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    text.set_valign(gtk::Align::Center);
+    text.set_hexpand(true);
+    text.append(&value);
+    text.append(&detail);
+
+    let current = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    current.set_vexpand(true);
+    current.set_valign(gtk::Align::Center);
+    current.append(&glyph_area);
+    current.append(&text);
+
+    let forecast = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    forecast.set_homogeneous(true);
+    forecast.set_halign(gtk::Align::Fill);
+
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    root.set_vexpand(true);
+    root.append(&header.root);
+    root.append(&current);
+    root.append(&forecast);
+    let root = ink.wrap(&root);
+
+    // Weather is fetched on demand: immediately, then every 15 minutes while
+    // the tile is on screen.
+    let state = Rc::new(State {
+        config,
+        geo: Rc::new(RefCell::new(None)),
+        conditions,
+        ink,
+        header,
+        value,
+        detail,
+        forecast,
+        glyph_area,
+        pending: Cell::new(false),
     });
-    page.spin(
-        context,
-        Spin::new("days", "予報の日数", config.days as f64, 1.0, 7.0),
-    );
-    page.switch(context, "fahrenheit", "華氏で表示", config.fahrenheit);
-    page.note("天気は Open-Meteo (open-meteo.com) から取得します。API キーは不要です。");
-    page.note("場所を書き換えると、座標を調べ直して天気を取り直します。");
 
-    Ok(page.finish())
-}
+    let state_for_tick = state.clone();
+    tick_seconds(&root, REFRESH_SECONDS, move || state_for_tick.refresh());
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn weather_codes_map_to_glyphs() {
-        assert_eq!(glyph_for(0), WeatherGlyph::Clear);
-        assert_eq!(glyph_for(3), WeatherGlyph::Cloudy);
-        assert_eq!(glyph_for(63), WeatherGlyph::Rain);
-        assert_eq!(glyph_for(75), WeatherGlyph::Snow);
-        assert_eq!(glyph_for(95), WeatherGlyph::Thunder);
-        assert_eq!(glyph_for(1234), WeatherGlyph::Cloudy);
-    }
-
-    #[test]
-    fn descriptions_are_never_empty() {
-        for code in 0..=99 {
-            assert!(!describe(code).is_empty());
-        }
-    }
+    Ok(root.upcast())
 }

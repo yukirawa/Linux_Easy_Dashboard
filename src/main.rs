@@ -1,4 +1,4 @@
-//! Easy Dashboard Maker — a native GTK4 + libadwaita desktop dashboard.
+//! Linux_Easy_Dashboard — a native GTK4 + libadwaita desktop dashboard.
 //!
 //! Entry point: set up logging, install a panic hook that leaves a trace, and
 //! hand control to the `AdwApplication`.
@@ -14,6 +14,7 @@ mod platform;
 mod plugin;
 mod ui;
 mod util;
+mod views;
 mod widgets;
 mod window;
 

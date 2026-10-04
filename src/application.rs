@@ -12,8 +12,8 @@ use log::{debug, error, info, warn};
 use crate::config::{AppConfig, ConfigStore};
 use crate::window::DashboardWindow;
 
-pub const APP_ID: &str = "io.github.yukirawa.EasyDashboardMaker";
-pub const APP_NAME: &str = "Easy Dashboard Maker";
+pub const APP_ID: &str = "io.github.yukirawa.LinuxEasyDashboard";
+pub const APP_NAME: &str = "Linux_Easy_Dashboard";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub fn build() -> adw::Application {
@@ -22,9 +22,9 @@ pub fn build() -> adw::Application {
         warn!("libadwaita を初期化できません: {e}");
     }
 
-    // `EDM_DEV_APP_ID` allows a second instance for development: GApplication
+    // `LED_DEV_APP_ID` allows a second instance for development: GApplication
     // would otherwise refuse to start while the user's dashboard is running.
-    let app_id = std::env::var("EDM_DEV_APP_ID").unwrap_or_else(|_| APP_ID.to_owned());
+    let app_id = std::env::var("LED_DEV_APP_ID").unwrap_or_else(|_| APP_ID.to_owned());
     let app = adw::Application::builder().application_id(app_id).build();
 
     app.connect_startup(|_| {
@@ -126,7 +126,7 @@ fn show_about(app: &adw::Application) {
 }
 
 /// Loads the built in stylesheet, then an optional user override from
-/// `$XDG_CONFIG_HOME/easy-dashboard-maker/style.css`.
+/// `$XDG_CONFIG_HOME/linux-easy-dashboard/style.css`.
 fn load_stylesheet() {
     let Some(display) = gtk::gdk::Display::default() else {
         warn!("ディスプレイを開けないためスタイルを読み込みません");

@@ -1,4 +1,6 @@
-//! Media player widget, driven by MPRIS over the session bus.
+//! `media` view family. See `src/views/mod.rs`.
+//!
+//! Media player tile, driven by MPRIS over the session bus.
 //!
 //! * Players are found by listing the session bus and keeping the names under
 //!   `org.mpris.MediaPlayer2.`, so any MPRIS capable player works — Spotify,
@@ -7,9 +9,6 @@
 //!   the dashboard. Errors are swallowed and read as "nothing is playing".
 //! * `Position` is a snapshot taken when the properties arrive, so the bar is
 //!   advanced locally between the once-a-second polls.
-//!
-//! Nothing here has to be configured: with an empty player name the tile
-//! follows whichever player is playing.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -21,25 +20,10 @@ use anyhow::Result;
 use glib::Variant;
 use gtk::prelude::*;
 use gtk::{gio, glib};
-use libadwaita::prelude::*;
 use log::debug;
-use serde::{Deserialize, Serialize};
 
-use super::{Category, DetailPage, TileHeader, WidgetContext, WidgetDescriptor};
-
-pub const KIND: &str = "media";
-
-pub const DESCRIPTOR: WidgetDescriptor = WidgetDescriptor {
-    kind: KIND,
-    name: "メディアプレイヤー",
-    summary: "再生中のトラックと操作",
-    icon: "audio-x-generic-symbolic",
-    category: Category::Info,
-    default_size: (360, 220),
-    aspect: None,
-    build,
-    detail,
-};
+use crate::plugin::{Plugin, View};
+use crate::widgets::{TileHeader, WidgetContext, tick_seconds};
 
 /// Every MPRIS player publishes its bus name under this prefix.
 const PLAYER_PREFIX: &str = "org.mpris.MediaPlayer2.";
@@ -62,31 +46,17 @@ const LIST_EVERY: u32 = 5;
 const MAX_PLAYERS: usize = 8;
 /// Artwork size in the tile.
 const COVER_SIZE: i32 = 56;
-/// Shown while the detail view is still waiting for the bus.
-const PENDING: &str = "取得中…";
 /// Shown in place of a missing value.
 const DASH: &str = "—";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-struct MediaConfig {
+/// The `[view]` options this tile draws with, taken from the definition.
+struct Options {
     /// Bus name suffix of the player to follow. Empty follows whatever plays.
     player: String,
     /// Hide the tile when nothing is playing.
     only_while_playing: bool,
     show_controls: bool,
     show_art: bool,
-}
-
-impl Default for MediaConfig {
-    fn default() -> Self {
-        Self {
-            player: String::new(),
-            only_while_playing: true,
-            show_controls: true,
-            show_art: true,
-        }
-    }
 }
 
 /// MPRIS `PlaybackStatus`.
@@ -514,11 +484,27 @@ fn finish_player(bus: &Bus, name: String, mut player: Player, on_done: OnPlayer)
     });
 }
 
+/// The bar position right now: the snapshot plus however long has passed since
+/// it was taken, while the player is running.
+fn progress_now(player: &Player) -> f64 {
+    let position = if player.state == State::Playing {
+        player.position.saturating_add(elapsed_micros(player.at))
+    } else {
+        player.position
+    };
+    progress_fraction(position, player.length)
+}
+
+fn elapsed_micros(at: Instant) -> i64 {
+    i64::try_from(at.elapsed().as_micros()).unwrap_or(i64::MAX)
+}
+
 /// The tile's live state, kept in one place so the tick, the callbacks and the
 /// buttons stay in sync.
 struct Live {
     context: WidgetContext,
-    config: MediaConfig,
+    config: Options,
+    icon: String,
     header: TileHeader,
     cover: gtk::Image,
     title: gtk::Label,
@@ -698,7 +684,7 @@ impl Live {
         bus.command(&name, method);
     }
 
-    /// Puts the artwork up when the player offers a local file, and the widget's
+    /// Puts the artwork up when the player offers a local file, and the tile's
     /// own icon otherwise (web URLs are never fetched).
     fn set_cover(&self, art_url: &str) {
         let path = if self.config.show_art {
@@ -708,33 +694,36 @@ impl Live {
         };
         match path {
             Some(path) => self.cover.set_from_file(Some(path)),
-            None => self.cover.set_icon_name(Some(DESCRIPTOR.icon)),
+            None => self.cover.set_icon_name(Some(&self.icon)),
         }
         self.cover.set_pixel_size(COVER_SIZE);
     }
 }
 
-/// The bar position right now: the snapshot plus however long has passed since
-/// it was taken, while the player is running.
-fn progress_now(player: &Player) -> f64 {
-    let position = if player.state == State::Playing {
-        player.position.saturating_add(elapsed_micros(player.at))
-    } else {
-        player.position
+pub fn media(definition: &Plugin, context: &WidgetContext) -> Result<gtk::Widget> {
+    let config = match &definition.view {
+        View::Media {
+            player,
+            only_while_playing,
+            show_controls,
+            show_art,
+        } => Options {
+            player: player.clone(),
+            only_while_playing: *only_while_playing,
+            show_controls: *show_controls,
+            show_art: *show_art,
+        },
+        _ => unreachable!("media called with the wrong view"),
     };
-    progress_fraction(position, player.length)
-}
+    let icon = if definition.icon.trim().is_empty() {
+        "audio-x-generic-symbolic".to_owned()
+    } else {
+        definition.icon.clone()
+    };
 
-fn elapsed_micros(at: Instant) -> i64 {
-    i64::try_from(at.elapsed().as_micros()).unwrap_or(i64::MAX)
-}
+    let header = TileHeader::new(&icon, "メディア");
 
-fn build(context: &WidgetContext) -> Result<gtk::Widget> {
-    let config: MediaConfig = context.config();
-
-    let header = TileHeader::new(DESCRIPTOR.icon, "メディア");
-
-    let cover = gtk::Image::from_icon_name(DESCRIPTOR.icon);
+    let cover = gtk::Image::from_icon_name(&icon);
     cover.set_pixel_size(COVER_SIZE);
     cover.add_css_class("edm-cover");
     cover.set_valign(gtk::Align::Center);
@@ -806,6 +795,7 @@ fn build(context: &WidgetContext) -> Result<gtk::Widget> {
     let live = Rc::new(Live {
         context: context.clone(),
         config,
+        icon,
         header,
         cover,
         title,
@@ -837,395 +827,7 @@ fn build(context: &WidgetContext) -> Result<gtk::Widget> {
     }
 
     let live_for_tick = live.clone();
-    super::tick_seconds(&root, TICK_SECONDS, move || live_for_tick.refresh());
+    tick_seconds(&root, TICK_SECONDS, move || live_for_tick.refresh());
 
     Ok(root.upcast())
-}
-
-/// The fact rows the detail view fills in when the bus answers. They are added
-/// straight away so the dialog opens instantly.
-struct Rows {
-    player: libadwaita::ActionRow,
-    state: libadwaita::ActionRow,
-    track: libadwaita::ActionRow,
-    artists: libadwaita::ActionRow,
-    album: libadwaita::ActionRow,
-    length: libadwaita::ActionRow,
-    position: libadwaita::ActionRow,
-    found: libadwaita::ActionRow,
-}
-
-impl Rows {
-    fn new(page: &DetailPage) -> Rc<Self> {
-        let row = |title: &str| {
-            let row = libadwaita::ActionRow::builder()
-                .title(title)
-                .subtitle(PENDING)
-                .build();
-            page.fact_row(&row);
-            row
-        };
-        Rc::new(Self {
-            player: row("プレイヤー"),
-            state: row("状態"),
-            track: row("トラック"),
-            artists: row("アーティスト"),
-            album: row("アルバム"),
-            length: row("長さ"),
-            position: row("位置"),
-            found: row("見つかっているプレイヤー"),
-        })
-    }
-
-    fn show(&self, player: &Player, found: &[String]) {
-        self.player.set_subtitle(label_or_dash(&player.identity));
-        self.state.set_subtitle(state_label(player.state));
-        self.track.set_subtitle(label_or_dash(&player.title));
-        self.artists.set_subtitle(label_or_dash(&player.artist));
-        self.album.set_subtitle(label_or_dash(&player.album));
-        self.length.set_subtitle(&format_time(player.length));
-        self.position.set_subtitle(&format_time(player.position));
-        let names = found.join(", ");
-        self.found
-            .set_subtitle(if names.is_empty() { DASH } else { &names });
-    }
-
-    fn none(&self) {
-        for row in [
-            &self.state,
-            &self.track,
-            &self.artists,
-            &self.album,
-            &self.length,
-            &self.position,
-        ] {
-            row.set_subtitle(DASH);
-        }
-        self.player.set_subtitle("再生中のプレイヤーはありません");
-        self.found.set_subtitle(DASH);
-    }
-}
-
-fn state_label(state: State) -> &'static str {
-    match state {
-        State::Playing => "再生中",
-        State::Paused => "一時停止",
-        State::Stopped => "停止",
-    }
-}
-
-fn detail(context: &WidgetContext) -> Result<gtk::Widget> {
-    let config: MediaConfig = context.config();
-    let page = DetailPage::new("再生中のプレイヤー", "表示");
-    let rows = Rows::new(&page);
-
-    // `bus_get_sync` only ever returns a cached connection here: the tile has
-    // been polling since it was placed, so this does not wait on the bus. It is
-    // needed synchronously because the note below has to exist before `finish`.
-    match Bus::session() {
-        Some(bus) => {
-            let wanted = config.player.clone();
-            let rows_for_bus = rows;
-            let handle = bus.clone();
-            handle.list_names(move |names| {
-                let names = names.unwrap_or_default();
-                let players: Vec<String> = names
-                    .into_iter()
-                    .filter(|name| is_player_name(name))
-                    .collect();
-                let candidates: Vec<String> = players
-                    .iter()
-                    .filter(|name| matches_player(bus_suffix(name), &wanted))
-                    .take(MAX_PLAYERS)
-                    .cloned()
-                    .collect();
-                let found: Vec<String> = players
-                    .iter()
-                    .map(|name| bus_suffix(name).to_owned())
-                    .collect();
-
-                let rows_for_bus = rows_for_bus.clone();
-                let on_done: OnPlayer = Rc::new(move |result| match result {
-                    Some((_, player)) => rows_for_bus.show(&player, &found),
-                    None => rows_for_bus.none(),
-                });
-                // Probes every candidate in parallel and reports the best of
-                // them; the row in the page lists the whole bus either way.
-                probe_best(&bus, candidates, on_done);
-            });
-        }
-        None => {
-            rows.none();
-            page.note("セッションバスに接続できませんでした。MPRIS 対応のプレイヤーが動いているか確認してください。");
-        }
-    }
-
-    page.switch(
-        context,
-        "only_while_playing",
-        "再生中だけ表示",
-        config.only_while_playing,
-    );
-    page.switch(
-        context,
-        "show_controls",
-        "操作ボタンを表示",
-        config.show_controls,
-    );
-    page.switch(context, "show_art", "アートワークを表示", config.show_art);
-    page.entry(context, "player", "プレイヤー (空で自動)", &config.player);
-    page.note("MPRIS (org.mpris.MediaPlayer2) に対応したプレイヤーが対象です。");
-    page.note("プレイヤー名はバス名の末尾で照合します (例: spotify, firefox, mpv)。");
-    Ok(page.finish())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Builds the `a{sv}` dictionary the bus would send.
-    fn dictionary(entries: &[(&str, Variant)]) -> Variant {
-        let map: HashMap<String, Variant> = entries
-            .iter()
-            .map(|(key, value)| ((*key).to_owned(), value.clone()))
-            .collect();
-        map.to_variant()
-    }
-
-    fn player_properties(status: &str, metadata: Variant) -> Variant {
-        dictionary(&[
-            ("PlaybackStatus", status.to_variant()),
-            ("Metadata", metadata),
-        ])
-    }
-
-    fn metadata() -> Variant {
-        dictionary(&[
-            ("xesam:title", "夜に駆ける".to_variant()),
-            ("xesam:artist", vec!["YOASOBI".to_owned()].to_variant()),
-            ("xesam:album", "THE BOOK".to_variant()),
-            ("mpris:length", 184_000_000i64.to_variant()),
-            ("mpris:artUrl", "file:///tmp/a.jpg".to_variant()),
-        ])
-    }
-
-    #[test]
-    fn a_method_reply_is_unwrapped_from_its_return_value() {
-        // D-Bus hands back `(as)` for ListNames. Asking gio to *expect* `as`
-        // fails the whole call, which is exactly how this widget once ended up
-        // finding no player at all — so both halves are pinned here.
-        let names = vec![
-            ":1.2".to_owned(),
-            "org.mpris.MediaPlayer2.spotify".to_owned(),
-        ];
-        let reply = (names.clone(),).to_variant();
-        assert_eq!(reply.type_().as_str(), "(as)");
-        assert_eq!(payload(reply).get::<Vec<String>>(), Some(names));
-
-        // GetAll answers `(a{sv})`, and the dictionary inside is what the
-        // parser reads.
-        let properties: HashMap<String, Variant> = [
-            ("PlaybackStatus".to_owned(), "Playing".to_variant()),
-            ("Metadata".to_owned(), metadata()),
-        ]
-        .into_iter()
-        .collect();
-        let wrapped = (properties,).to_variant();
-        assert_eq!(wrapped.type_().as_str(), "(a{sv})");
-
-        let player = parse_player("org.mpris.MediaPlayer2.spotify", &payload(wrapped));
-        assert_eq!(player.state, State::Playing);
-        assert_eq!(player.title, "夜に駆ける");
-        assert_eq!(player.artist, "YOASOBI");
-        assert_eq!(player.length, 184_000_000);
-
-        // A command reply is empty, and a dictionary with a single entry is not
-        // a reply at all: neither may be unwrapped.
-        assert_eq!(payload(().to_variant()).n_children(), 0);
-        let single = dictionary(&[("PlaybackStatus", "Playing".to_variant())]);
-        assert_eq!(payload(single.clone()).type_(), single.type_());
-    }
-
-    #[test]
-    fn bus_names_are_split_into_suffixes() {
-        assert_eq!(bus_suffix("org.mpris.MediaPlayer2.spotify"), "spotify");
-        assert_eq!(bus_suffix("org.mpris.MediaPlayer2."), "");
-        assert_eq!(bus_suffix("org.freedesktop.DBus"), "org.freedesktop.DBus");
-
-        assert!(is_player_name("org.mpris.MediaPlayer2.spotify"));
-        assert!(is_player_name("org.mpris.MediaPlayer2.firefox.instance1"));
-        assert!(!is_player_name("org.mpris.MediaPlayer2."));
-        assert!(!is_player_name("org.freedesktop.DBus"));
-        assert!(!is_player_name(""));
-    }
-
-    #[test]
-    fn players_match_the_configured_prefix() {
-        assert!(matches_player("spotify", ""));
-        assert!(matches_player("spotify", "  "));
-        assert!(matches_player("spotify", "spot"));
-        assert!(matches_player("Spotify", "spot"));
-        assert!(!matches_player("firefox", "spot"));
-        assert!(!matches_player("", "spot"));
-    }
-
-    #[test]
-    fn playback_statuses_become_states() {
-        assert_eq!(playback_state("Playing"), State::Playing);
-        assert_eq!(playback_state("Paused"), State::Paused);
-        assert_eq!(playback_state("Stopped"), State::Stopped);
-        assert_eq!(playback_state("playing"), State::Playing);
-        assert_eq!(playback_state(""), State::Stopped);
-        assert_eq!(playback_state("nonsense"), State::Stopped);
-        assert!(State::Playing.rank() > State::Paused.rank());
-        assert!(State::Paused.rank() > State::Stopped.rank());
-    }
-
-    #[test]
-    fn times_are_formatted_as_minutes_and_seconds() {
-        assert_eq!(format_time(184_000_000), "3:04");
-        assert_eq!(format_time(0), "--:--");
-        assert_eq!(format_time(-1), "--:--");
-        assert_eq!(format_time(1_000_000), "0:01");
-        assert_eq!(format_time(59_000_000), "0:59");
-        assert_eq!(format_time(3_600_000_000), "1:00:00");
-        assert_eq!(format_time(3_723_000_000), "1:02:03");
-    }
-
-    #[test]
-    fn progress_is_clamped_between_zero_and_one() {
-        assert_eq!(progress_fraction(30_000_000, 120_000_000), 0.25);
-        assert_eq!(progress_fraction(0, 120_000_000), 0.0);
-        assert_eq!(progress_fraction(240_000_000, 120_000_000), 1.0);
-        assert_eq!(progress_fraction(-5, 120_000_000), 0.0);
-        assert_eq!(progress_fraction(5, 0), 0.0);
-        assert_eq!(progress_fraction(5, -1), 0.0);
-    }
-
-    #[test]
-    fn only_file_urls_are_read_from_disk() {
-        assert!(is_local_art("file:///tmp/a.jpg"));
-        assert!(!is_local_art("https://example.com/a.jpg"));
-        assert!(!is_local_art("data:image/png;base64,AAAA"));
-        assert!(!is_local_art(""));
-
-        assert_eq!(
-            local_art_path("file:///tmp/a.jpg"),
-            Some(PathBuf::from("/tmp/a.jpg"))
-        );
-        assert_eq!(
-            local_art_path("file:///tmp/a%20b.jpg"),
-            Some(PathBuf::from("/tmp/a b.jpg"))
-        );
-        assert_eq!(local_art_path("https://example.com/a.jpg"), None);
-        assert_eq!(local_art_path("file://"), None);
-    }
-
-    #[test]
-    fn metadata_is_read_through_the_variant_dictionary() {
-        let metadata = metadata();
-        assert_eq!(
-            metadata_text(&metadata, "xesam:title").as_deref(),
-            Some("夜に駆ける")
-        );
-        assert_eq!(
-            metadata_list(&metadata, "xesam:artist"),
-            Some(vec!["YOASOBI".to_owned()])
-        );
-        assert_eq!(metadata_int(&metadata, "mpris:length"), Some(184_000_000));
-        assert_eq!(
-            metadata_text(&metadata, "mpris:artUrl").as_deref(),
-            Some("file:///tmp/a.jpg")
-        );
-
-        // Missing keys, unexpected types and blank strings are all "unknown".
-        assert_eq!(metadata_text(&metadata, "xesam:genre"), None);
-        assert_eq!(metadata_int(&metadata, "xesam:title"), None);
-        assert_eq!(metadata_list(&metadata, "xesam:title"), None);
-        assert_eq!(metadata_text(&metadata, ""), None);
-
-        let blank = dictionary(&[("xesam:title", "   ".to_variant())]);
-        assert_eq!(metadata_text(&blank, "xesam:title"), None);
-
-        // Not a dictionary at all.
-        assert_eq!(metadata_text(&7i64.to_variant(), "xesam:title"), None);
-        assert!(dictionary(&[]).get::<HashMap<String, Variant>>().is_some());
-    }
-
-    #[test]
-    fn numbers_of_any_width_are_accepted() {
-        assert_eq!(variant_i64(&5i64.to_variant()), Some(5));
-        assert_eq!(variant_i64(&5u64.to_variant()), Some(5));
-        assert_eq!(variant_i64(&5i32.to_variant()), Some(5));
-        assert_eq!(variant_i64(&5u32.to_variant()), Some(5));
-        assert_eq!(variant_i64(&5i16.to_variant()), Some(5));
-        assert_eq!(variant_i64(&5u16.to_variant()), Some(5));
-        assert_eq!(variant_i64(&u64::MAX.to_variant()), None);
-        assert_eq!(variant_i64(&"5".to_variant()), None);
-    }
-
-    #[test]
-    fn players_are_parsed_from_their_properties() {
-        let player = parse_player(
-            "org.mpris.MediaPlayer2.spotify",
-            &player_properties("Playing", metadata()),
-        );
-        assert_eq!(player.identity, "spotify");
-        assert_eq!(player.state, State::Playing);
-        assert_eq!(player.title, "夜に駆ける");
-        assert_eq!(player.artist, "YOASOBI");
-        assert_eq!(player.album, "THE BOOK");
-        assert_eq!(player.length, 184_000_000);
-        assert_eq!(player.art_url, "file:///tmp/a.jpg");
-        assert_eq!(player.position, 0);
-
-        // A player with no metadata and no status is merely stopped.
-        let bare = parse_player("org.mpris.MediaPlayer2.mpv", &dictionary(&[]));
-        assert_eq!(bare.state, State::Stopped);
-        assert_eq!(bare.title, "");
-        assert_eq!(bare.length, 0);
-
-        let odd = parse_player(
-            "org.mpris.MediaPlayer2.vlc",
-            &player_properties("Playing", "not a dictionary".to_variant()),
-        );
-        assert_eq!(odd.state, State::Playing);
-        assert_eq!(odd.title, "");
-    }
-
-    #[test]
-    fn durations_only_count_down_while_playing() {
-        let mut player = Player {
-            identity: "spotify".to_owned(),
-            state: State::Playing,
-            title: String::new(),
-            artist: String::new(),
-            album: String::new(),
-            length: 60_000_000,
-            art_url: String::new(),
-            position: 30_000_000,
-            at: Instant::now(),
-        };
-        assert!(progress_now(&player) >= 0.5);
-
-        player.state = State::Paused;
-        assert_eq!(progress_now(&player), 0.5);
-
-        player.state = State::Playing;
-        player.length = 0;
-        assert_eq!(progress_now(&player), 0.0);
-        assert!(elapsed_micros(player.at) >= 0);
-    }
-
-    #[test]
-    fn missing_values_read_as_an_unknown_track() {
-        assert_eq!(label_or_dash(""), DASH);
-        assert_eq!(label_or_dash("  "), DASH);
-        assert_eq!(label_or_dash("title"), "title");
-
-        assert_eq!(track_line("YOASOBI", "THE BOOK"), "YOASOBI · THE BOOK");
-        assert_eq!(track_line("YOASOBI", ""), "YOASOBI");
-        assert_eq!(track_line("", "THE BOOK"), "THE BOOK");
-        assert_eq!(track_line(" ", " "), DASH);
-    }
 }

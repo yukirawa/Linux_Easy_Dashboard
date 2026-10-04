@@ -1,0 +1,29 @@
+id = "launcher"
+name = "ランチャー"
+summary = "アプリケーションを一括起動"
+icon = "view-app-grid-symbolic"
+category = "apps"
+size = [320, 240]
+
+[view]
+kind = "launcher"
+apps = "org.gnome.Nautilus.desktop, org.gnome.Terminal.desktop, firefox.desktop"
+columns = 3
+show_labels = true
+
+[[settings]]
+key = "apps"
+kind = "text"
+title = "アプリ（desktop id のカンマ区切り）"
+
+[[settings]]
+key = "columns"
+kind = "int"
+title = "列数"
+min = 1
+max = 8
+
+[[settings]]
+key = "show_labels"
+kind = "bool"
+title = "ラベルを表示"

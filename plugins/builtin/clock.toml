@@ -1,0 +1,34 @@
+id = "clock"
+name = "時計"
+summary = "デジタル時刻（24/12 時間、秒、日付）"
+icon = "preferences-system-time-symbolic"
+category = "time"
+size = [300, 200]
+refresh = 1
+
+[view]
+kind = "clock"
+hour24 = true
+show_seconds = false
+show_date = true
+timezone = ""
+
+[[settings]]
+key = "hour24"
+kind = "bool"
+title = "24 時間表記"
+
+[[settings]]
+key = "show_seconds"
+kind = "bool"
+title = "秒を表示"
+
+[[settings]]
+key = "show_date"
+kind = "bool"
+title = "日付を表示"
+
+[[settings]]
+key = "timezone"
+kind = "text"
+title = "タイムゾーン（IANA、空でシステム）"

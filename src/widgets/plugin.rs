@@ -102,6 +102,27 @@ fn build(context: &WidgetContext) -> Result<gtk::Widget> {
     root.set_vexpand(true);
     root.append(&header.root);
 
+    // Self-driven views (clocks, monitors, launcher, …) own their data and
+    // render a whole body of their own; the generic source-driven path is only
+    // for the declarative readout/meter views.
+    if definition.view.self_driven() {
+        let body = crate::views::build(&definition, context)?;
+        root.append(&body);
+        root.append(&caption);
+        let root = ink.wrap(&root);
+
+        // Still notice definition reloads so a saved edit rebuilds the tile.
+        let revision = config.revision;
+        let context_for_tick = context.clone();
+        super::tick_seconds(&root, definition.refresh.max(1) as u32, move || {
+            let current = plugin::revision();
+            if current != revision {
+                context_for_tick.set("revision", serde_json::json!(current));
+            }
+        });
+        return Ok(root.upcast());
+    }
+
     let apply = match &definition.view {
         View::Readout { label, .. } => readout_view(&root, &definition, label),
         View::Bar { .. } => bar_view(&root, &definition, &ink),
@@ -111,6 +132,9 @@ fn build(context: &WidgetContext) -> Result<gtk::Widget> {
         View::Facts { rows, .. } => facts_view(&root, &definition, *rows, &header, &caption),
         View::Bars { rows, .. } => bars_view(&root, &definition, *rows, &ink, &header, &caption),
         View::Text { wrap } => text_view(&root, &definition, *wrap),
+        // Handled above.
+        other if other.self_driven() => unreachable!("self-driven views return early"),
+        other => return Err(anyhow!("未対応のビューです: {other:?}")),
     };
 
     root.append(&caption);
@@ -833,6 +857,16 @@ fn source_label(source: &plugin::Source) -> String {
             format!("コマンド ({timeout_secs} 秒): {run}")
         }
         plugin::Source::File { path } => format!("ファイル: {path}"),
+        plugin::Source::Clock { format, timezone } => {
+            if timezone.trim().is_empty() {
+                format!("時刻: {format}")
+            } else {
+                format!("時刻 ({timezone}): {format}")
+            }
+        }
+        plugin::Source::Http {
+            url, timeout_secs, ..
+        } => format!("HTTP ({timeout_secs} 秒): {url}"),
     }
 }
 

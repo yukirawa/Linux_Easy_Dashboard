@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=Easy Dashboard Maker
+Name=Linux_Easy_Dashboard
 Comment=A native dashboard for widgets you place yourself
 Comment[ja]=ウィジェットを自由に配置できるネイティブダッシュボード
-Exec=easy-dashboard-maker
-Icon=io.github.yukirawa.EasyDashboardMaker
+Exec=linux-easy-dashboard
+Icon=io.github.yukirawa.LinuxEasyDashboard
 Terminal=false
 Categories=Utility;
 Keywords=dashboard;widgets;system;clock;

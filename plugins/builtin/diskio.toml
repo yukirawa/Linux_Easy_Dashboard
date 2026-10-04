@@ -1,0 +1,22 @@
+id = "diskio"
+name = "ディスク I/O"
+summary = "読み書きの速度と推移"
+icon = "drive-harddisk-symbolic"
+category = "system"
+size = [340, 220]
+refresh = 2
+
+[view]
+kind = "diskio"
+device = ""
+show_history = true
+
+[[settings]]
+key = "device"
+kind = "text"
+title = "デバイス名（空で自動）"
+
+[[settings]]
+key = "show_history"
+kind = "bool"
+title = "推移グラフを表示"

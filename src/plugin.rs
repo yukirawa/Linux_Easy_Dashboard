@@ -1,6 +1,6 @@
 //! User defined widgets.
 //!
-//! Every `*.toml` file in `$XDG_CONFIG_HOME/easy-dashboard-maker/plugins`
+//! Every `*.toml` file in `$XDG_CONFIG_HOME/linux-easy-dashboard/plugins`
 //! describes one widget the user wrote themselves: where the value comes from
 //! ([`Source`]) and how it should be drawn ([`View`]). This module loads,
 //! validates, samples and saves those files; the tile that draws one lives in
@@ -57,6 +57,21 @@ pub enum Source {
     },
     /// Reads a file, at most [`FILE_LIMIT`] bytes of it.
     File { path: String },
+    /// Formats the current time with a strftime pattern (and optional IANA zone).
+    Clock {
+        format: String,
+        #[serde(default)]
+        timezone: String,
+    },
+    /// GETs a URL and returns the body (optionally a JSON pointer).
+    Http {
+        url: String,
+        #[serde(default = "default_timeout")]
+        timeout_secs: u64,
+        /// RFC 6901 JSON pointer, e.g. `/current/temperature_2m`.
+        #[serde(default)]
+        json_pointer: String,
+    },
 }
 
 impl Source {
@@ -72,6 +87,23 @@ impl Source {
                 if path.trim().is_empty() {
                     return Err("source.path を指定してください".to_owned());
                 }
+            }
+            Self::Clock { format, timezone } => {
+                if format.trim().is_empty() {
+                    return Err("source.format を指定してください".to_owned());
+                }
+                *timezone = timezone.trim().to_owned();
+            }
+            Self::Http {
+                url,
+                timeout_secs,
+                json_pointer,
+            } => {
+                if url.trim().is_empty() {
+                    return Err("source.url を指定してください".to_owned());
+                }
+                *timeout_secs = (*timeout_secs).clamp(MIN_TIMEOUT, MAX_TIMEOUT);
+                *json_pointer = json_pointer.trim().to_owned();
             }
         }
         Ok(())
@@ -169,6 +201,178 @@ pub enum View {
         #[serde(default = "default_true")]
         wrap: bool,
     },
+    // ---- settings-only / time-driven ----
+    /// Section title with an accent bar.
+    Heading {
+        #[serde(default)]
+        title: String,
+        #[serde(default)]
+        subtitle: String,
+        #[serde(default = "default_true")]
+        accent: bool,
+    },
+    /// Sticky note; the body is per-tile instance state.
+    Note {
+        #[serde(default)]
+        title: String,
+        #[serde(default)]
+        text: String,
+    },
+    /// Digital clock.
+    Clock {
+        #[serde(default = "default_true")]
+        hour24: bool,
+        #[serde(default)]
+        show_seconds: bool,
+        #[serde(default = "default_true")]
+        show_date: bool,
+        /// IANA zone; empty means the system zone.
+        #[serde(default)]
+        timezone: String,
+    },
+    /// Cairo clock face.
+    AnalogClock {
+        #[serde(default = "default_true")]
+        show_seconds: bool,
+        #[serde(default)]
+        show_numerals: bool,
+        #[serde(default)]
+        smooth_seconds: bool,
+    },
+    /// Several time zones side by side.
+    WorldClock {
+        /// Comma separated IANA identifiers.
+        #[serde(default)]
+        zones: String,
+        #[serde(default = "default_true")]
+        hour24: bool,
+    },
+    /// Month grid.
+    Calendar {
+        #[serde(default = "default_true")]
+        week_starts_monday: bool,
+    },
+    /// Big date plus year progress.
+    Date {
+        #[serde(default = "default_true")]
+        show_week: bool,
+        #[serde(default = "default_true")]
+        show_progress: bool,
+    },
+    // ---- interactive ----
+    /// Desktop application buttons.
+    Launcher {
+        /// Comma separated desktop-entry ids.
+        #[serde(default)]
+        apps: String,
+        #[serde(default = "default_columns")]
+        columns: usize,
+        #[serde(default = "default_true")]
+        show_labels: bool,
+    },
+    /// MPRIS now-playing tile.
+    Media {
+        /// Preferred player bus suffix; empty picks the first playing one.
+        #[serde(default)]
+        player: String,
+        #[serde(default = "default_true")]
+        only_while_playing: bool,
+        #[serde(default = "default_true")]
+        show_controls: bool,
+        #[serde(default = "default_true")]
+        show_art: bool,
+    },
+    /// Open-Meteo current conditions and a short forecast.
+    Weather {
+        /// Place name; coordinates are cached once geocoded.
+        #[serde(default)]
+        location: String,
+        #[serde(default)]
+        fahrenheit: bool,
+        #[serde(default = "default_days")]
+        days: usize,
+    },
+    // ---- system monitors (kernel samples procfs/sysfs themselves) ----
+    /// Per-core columns plus total history.
+    Cpu {
+        #[serde(default = "default_true")]
+        per_core: bool,
+        #[serde(default = "default_true")]
+        show_history: bool,
+    },
+    /// Heatmap of every core.
+    Cores {
+        #[serde(default)]
+        columns: usize,
+        #[serde(default = "default_true")]
+        warn_by_usage: bool,
+    },
+    /// RAM ring gauge and swap line.
+    Memory {
+        #[serde(default = "default_true")]
+        show_swap: bool,
+        #[serde(default = "default_true")]
+        warn_by_usage: bool,
+    },
+    /// One ring per mount.
+    Disk {
+        /// Comma separated mount points; empty tracks the root filesystem.
+        #[serde(default)]
+        mounts: String,
+        #[serde(default = "default_rows")]
+        max_rows: usize,
+        #[serde(default = "default_true")]
+        show_free: bool,
+    },
+    /// Read/write rates and history.
+    #[serde(rename = "diskio")]
+    DiskIo {
+        /// Device name; empty tracks the busiest one.
+        #[serde(default)]
+        device: String,
+        #[serde(default = "default_true")]
+        show_history: bool,
+    },
+    /// Receive/transmit rates and history.
+    Network {
+        /// Interface name; empty tracks the default route.
+        #[serde(default)]
+        interface: String,
+        #[serde(default = "default_true")]
+        show_history: bool,
+    },
+    /// Load average, normalised by core count.
+    Load {
+        #[serde(default = "default_true")]
+        show_history: bool,
+    },
+    /// Charge ring and remaining time.
+    Battery {
+        #[serde(default = "default_true")]
+        show_time: bool,
+        #[serde(default = "default_true")]
+        warn_by_charge: bool,
+    },
+    /// Heaviest processes.
+    Processes {
+        #[serde(default = "default_rows")]
+        count: usize,
+        #[serde(default = "default_true")]
+        by_cpu: bool,
+    },
+    /// Combined CPU / memory / load / disk summary.
+    System {
+        #[serde(default = "default_true")]
+        show_cpu: bool,
+        #[serde(default = "default_true")]
+        show_memory: bool,
+        #[serde(default = "default_true")]
+        show_load: bool,
+        #[serde(default = "default_true")]
+        show_disk: bool,
+        #[serde(default = "default_disk_path")]
+        disk_path: String,
+    },
 }
 
 impl View {
@@ -180,7 +384,7 @@ impl View {
             | Self::Ring { number, .. }
             | Self::Sparkline { number, .. }
             | Self::Bars { number, .. } => Some(*number),
-            Self::List { .. } | Self::Facts { .. } | Self::Text { .. } => None,
+            _ => None,
         }
     }
 
@@ -192,8 +396,36 @@ impl View {
             | Self::Ring { unit, .. }
             | Self::Sparkline { unit, .. }
             | Self::Bars { unit, .. } => unit,
-            Self::List { .. } | Self::Facts { .. } | Self::Text { .. } => "",
+            _ => "",
         }
+    }
+
+    /// True when the renderer owns its own data (clock, monitors, …) and the
+    /// optional `[source]` is not what feeds the tile.
+    pub fn self_driven(&self) -> bool {
+        matches!(
+            self,
+            Self::Heading { .. }
+                | Self::Note { .. }
+                | Self::Clock { .. }
+                | Self::AnalogClock { .. }
+                | Self::WorldClock { .. }
+                | Self::Calendar { .. }
+                | Self::Date { .. }
+                | Self::Launcher { .. }
+                | Self::Media { .. }
+                | Self::Weather { .. }
+                | Self::Cpu { .. }
+                | Self::Cores { .. }
+                | Self::Memory { .. }
+                | Self::Disk { .. }
+                | Self::DiskIo { .. }
+                | Self::Network { .. }
+                | Self::Load { .. }
+                | Self::Battery { .. }
+                | Self::Processes { .. }
+                | Self::System { .. }
+        )
     }
 
     fn normalise(&mut self) {
@@ -225,7 +457,47 @@ impl View {
                 }
                 number.normalise();
             }
-            Self::Text { .. } => {}
+            Self::Text { .. }
+            | Self::Heading { .. }
+            | Self::Note { .. }
+            | Self::Clock { .. }
+            | Self::AnalogClock { .. }
+            | Self::Calendar { .. }
+            | Self::Date { .. }
+            | Self::Media { .. }
+            | Self::Cpu { .. }
+            | Self::Memory { .. }
+            | Self::Load { .. }
+            | Self::Battery { .. }
+            | Self::System { .. } => {}
+            Self::WorldClock { zones, .. } => {
+                *zones = zones.trim().to_owned();
+            }
+            Self::Launcher { apps, columns, .. } => {
+                *apps = apps.trim().to_owned();
+                *columns = (*columns).clamp(1, MAX_ROWS);
+            }
+            Self::Weather { days, location, .. } => {
+                *days = (*days).clamp(1, 7);
+                *location = location.trim().to_owned();
+            }
+            Self::Cores { columns, .. } => {
+                *columns = (*columns).clamp(0, MAX_ROWS);
+            }
+            Self::Disk {
+                mounts,
+                max_rows,
+                ..
+            } => {
+                *mounts = mounts.trim().to_owned();
+                *max_rows = (*max_rows).clamp(MIN_ROWS, MAX_ROWS);
+            }
+            Self::DiskIo { device, .. } | Self::Network { interface: device, .. } => {
+                *device = device.trim().to_owned();
+            }
+            Self::Processes { count, .. } => {
+                *count = (*count).clamp(MIN_ROWS, MAX_ROWS);
+            }
         }
     }
 }
@@ -453,7 +725,7 @@ pub struct Loaded {
 
 /// The directory the plugin files live in, created if needed.
 ///
-/// `$XDG_CONFIG_HOME/easy-dashboard-maker/plugins`, falling back to
+/// `$XDG_CONFIG_HOME/linux-easy-dashboard/plugins`, falling back to
 /// `$HOME/.config/...` when that variable is unset, empty or relative.
 pub fn directory() -> PathBuf {
     let dir = directory_path();
@@ -500,8 +772,28 @@ pub fn revision() -> u64 {
 /// widget with a plugin is therefore a matter of writing a `.toml` here and
 /// deleting the old Rust module — the kernel itself does not change.
 const BUILTIN: &[&str] = &[
-    include_str!("../plugins/builtin/temperature.toml"),
+    include_str!("../plugins/builtin/analog_clock.toml"),
+    include_str!("../plugins/builtin/battery.toml"),
+    include_str!("../plugins/builtin/calendar.toml"),
+    include_str!("../plugins/builtin/clock.toml"),
+    include_str!("../plugins/builtin/cores.toml"),
+    include_str!("../plugins/builtin/cpu.toml"),
+    include_str!("../plugins/builtin/date.toml"),
+    include_str!("../plugins/builtin/disk.toml"),
+    include_str!("../plugins/builtin/diskio.toml"),
+    include_str!("../plugins/builtin/heading.toml"),
+    include_str!("../plugins/builtin/launcher.toml"),
+    include_str!("../plugins/builtin/load.toml"),
+    include_str!("../plugins/builtin/media.toml"),
+    include_str!("../plugins/builtin/memory.toml"),
+    include_str!("../plugins/builtin/network.toml"),
+    include_str!("../plugins/builtin/note.toml"),
+    include_str!("../plugins/builtin/processes.toml"),
+    include_str!("../plugins/builtin/system.toml"),
     include_str!("../plugins/builtin/systeminfo.toml"),
+    include_str!("../plugins/builtin/temperature.toml"),
+    include_str!("../plugins/builtin/weather.toml"),
+    include_str!("../plugins/builtin/world_clock.toml"),
 ];
 
 /// The built-in definitions, parsed. A broken one is skipped with a warning, so
@@ -735,7 +1027,85 @@ pub fn sample(source: &Source) -> Result<String, String> {
     match source {
         Source::Command { run, timeout_secs } => run_command(run, *timeout_secs),
         Source::File { path } => read_file(path),
+        Source::Clock { format, timezone } => sample_clock(format, timezone),
+        Source::Http {
+            url,
+            timeout_secs,
+            json_pointer,
+        } => sample_http(url, *timeout_secs, json_pointer),
     }
+}
+
+fn sample_clock(format: &str, timezone: &str) -> Result<String, String> {
+    use std::time::SystemTime;
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_err(|e| format!("時刻を読めません: {e}"))?;
+    let zone = if timezone.trim().is_empty() {
+        "local".to_owned()
+    } else {
+        timezone.trim().to_owned()
+    };
+    let epoch = now.as_secs() as i64;
+    let child = Command::new("/bin/sh")
+        .arg("-c")
+        .arg("date -d \"@$1\" \"$2\"")
+        .arg("--")
+        .arg(epoch.to_string())
+        .arg(format)
+        .env("TZ", &zone)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("時刻を整形できません: {e}"))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("出力を読めません: {e}"))?;
+    let text = truncate(String::from_utf8_lossy(&output.stdout).trim_end(), MAX_OUTPUT);
+    if text.is_empty() {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+    } else {
+        Ok(text)
+    }
+}
+
+fn sample_http(url: &str, timeout_secs: u64, json_pointer: &str) -> Result<String, String> {
+    let response = minreq::get(url)
+        .with_timeout(timeout_secs.clamp(MIN_TIMEOUT, MAX_TIMEOUT))
+        .send()
+        .map_err(|e| format!("取得できません: {e}"))?;
+    let body = truncate(
+        String::from_utf8_lossy(response.as_bytes()).trim_end(),
+        FILE_LIMIT as usize,
+    );
+    if json_pointer.trim().is_empty() {
+        return Ok(truncate(&body, MAX_OUTPUT));
+    }
+    let value: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("JSON を読めません: {e}"))?;
+    let mut cursor = &value;
+    for raw in json_pointer.trim().split('/').skip(1) {
+        let key = raw.replace("~1", "/").replace("~0", "~");
+        cursor = match cursor {
+            serde_json::Value::Object(map) => map
+                .get(&key)
+                .ok_or_else(|| format!("JSON ポインタが指すキーがありません: {key}"))?,
+            serde_json::Value::Array(list) => {
+                let index: usize = key
+                    .parse()
+                    .map_err(|_| format!("JSON ポインタの配列指定が不正です: {key}"))?;
+                list.get(index)
+                    .ok_or_else(|| format!("JSON ポインタの配列範囲外です: {key}"))?
+            }
+            _ => return Err("JSON ポインタの途中がオブジェクトでも配列でもありません".to_owned()),
+        };
+    }
+    Ok(match cursor {
+        serde_json::Value::String(text) => truncate(text, MAX_OUTPUT),
+        serde_json::Value::Null => String::new(),
+        other => truncate(&other.to_string(), MAX_OUTPUT),
+    })
 }
 
 fn run_command(run: &str, timeout_secs: u64) -> Result<String, String> {
@@ -1074,6 +1444,19 @@ fn one() -> f64 {
 fn default_icon() -> String {
     "application-x-executable-symbolic".to_owned()
 }
+
+fn default_columns() -> usize {
+    3
+}
+
+fn default_days() -> usize {
+    3
+}
+
+fn default_disk_path() -> String {
+    "/".to_owned()
+}
+
 
 fn default_size() -> (i32, i32) {
     (300, 180)

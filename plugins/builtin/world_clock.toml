@@ -1,0 +1,22 @@
+id = "world_clock"
+name = "ワールドクロック"
+summary = "複数タイムゾーンと昼夜マーカー"
+icon = "preferences-system-time-symbolic"
+category = "time"
+size = [320, 240]
+refresh = 1
+
+[view]
+kind = "world_clock"
+zones = "UTC, Asia/Tokyo, America/New_York, Europe/London"
+hour24 = true
+
+[[settings]]
+key = "zones"
+kind = "text"
+title = "タイムゾーン（カンマ区切りの IANA）"
+
+[[settings]]
+key = "hour24"
+kind = "bool"
+title = "24 時間表記"

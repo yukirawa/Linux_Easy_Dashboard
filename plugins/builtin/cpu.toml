@@ -1,0 +1,22 @@
+id = "cpu"
+name = "CPU"
+summary = "全体とコアごとの使用率"
+icon = "power-profile-performance-symbolic"
+category = "system"
+size = [360, 240]
+refresh = 1
+
+[view]
+kind = "cpu"
+per_core = true
+show_history = true
+
+[[settings]]
+key = "per_core"
+kind = "bool"
+title = "コアごとの使用率を表示"
+
+[[settings]]
+key = "show_history"
+kind = "bool"
+title = "推移グラフを表示"

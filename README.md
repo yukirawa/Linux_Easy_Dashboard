@@ -1,4 +1,4 @@
-# Easy Dashboard Maker
+# Linux_Easy_Dashboard
 
 Arch Linux 向けの、個人用デスクトップダッシュボード。
 システム情報・時刻・気象・アプリ起動などを 1 つのウィンドウに集約し、
@@ -7,14 +7,15 @@ Arch Linux 向けの、個人用デスクトップダッシュボード。
 - **完全ネイティブ**: GTK4 + libadwaita のみ。Web 技術（HTML/CSS/JS/WebView）は一切不使用。
 - **単一バイナリ**: Flatpak / Snap を使わず、`cargo build --release` の成果物 1 つで動く。
 - **Linux 準拠**: XDG ディレクトリ、freedesktop の `.desktop`、GNOME HIG に沿った UI。
-- **拡張可能**: ウィジェットはすべて [プラグイン](docs/plugins.md)（TOML 1 枚）。
-  **組み込みウィジェットも同じ仕組み**で動くので、土台とビューワーを変えずに足せる。
+- **マイクロカーネル**: ビューワーは「プラグインの表示」と「配置・並べ替え」だけ。
+  **ウィジェットはすべて [プラグイン](docs/plugins.md)（TOML 1 枚）** で、
+  組み込みもユーザー作も同じ仕組みです。
 
 ## ビルドと実行
 
 ```sh
 cargo build --release
-./target/release/easy-dashboard-maker
+./target/release/linux-easy-dashboard
 ```
 
 必要なもの: Rust 1.85+、`gtk4`、`libadwaita`（Arch: `pacman -S gtk4 libadwaita`）。
@@ -23,9 +24,9 @@ cargo build --release
 インストールする場合:
 
 ```sh
-install -Dm755 target/release/easy-dashboard-maker ~/.local/bin/easy-dashboard-maker
-install -Dm644 data/io.github.yukirawa.EasyDashboardMaker.desktop \
-  ~/.local/share/applications/io.github.yukirawa.EasyDashboardMaker.desktop
+install -Dm755 target/release/linux-easy-dashboard ~/.local/bin/linux-easy-dashboard
+install -Dm644 data/io.github.yukirawa.LinuxEasyDashboard.desktop \
+  ~/.local/share/applications/io.github.yukirawa.LinuxEasyDashboard.desktop
 ```
 
 ## 使い方
@@ -43,18 +44,19 @@ install -Dm644 data/io.github.yukirawa.EasyDashboardMaker.desktop \
 | ヘッダーの `+` | ウィジェットを追加（ジャンル別・検索つき） |
 | メニュー → プラグイン | 自分で書いた定義を再読み込み・フォルダを開く |
 
-配置・設定・ウィンドウサイズは `$XDG_CONFIG_HOME/easy-dashboard-maker/layout.json` に
+配置・設定・ウィンドウサイズは `$XDG_CONFIG_HOME/linux-easy-dashboard/layout.json` に
 自動保存される（原子的書き込み、壊れたファイルは `layout.invalid.json` に退避）。
-`$XDG_CONFIG_HOME/easy-dashboard-maker/style.css` を置くと見た目を上書きできる。
+`$XDG_CONFIG_HOME/linux-easy-dashboard/style.css` を置くと見た目を上書きできる。
 
-## ウィジェット
+## ウィジェット（すべてプラグイン）
 
 `+` の一覧はジャンルごとにまとまっていて、上の検索欄で名前・説明・内部名から
 絞り込める（空になったジャンルは見出しごと消える）。自分で書いたプラグインは
 同じ一覧の「プラグイン」欄に並ぶ。
 
-以下の表のうち **温度** と **システム情報** は、すでにプラグイン（`plugins/builtin/*.toml`）
-へ移行済み。残りも同じ仕組みへ順次移していく。
+**組み込みウィジェットもすべてプラグイン（`plugins/builtin/*.toml`）** です。
+カーネルは「タイルの置き方」と「ソース／ビューの実行」だけを知り、
+ウィジェットそのものは TOML で定義されます。
 
 | カテゴリ | ウィジェット | 内容 |
 | --- | --- | --- |
@@ -95,15 +97,16 @@ install -Dm644 data/io.github.yukirawa.EasyDashboardMaker.desktop \
 
 ## プラグイン（自分でウィジェットを書く）
 
-`~/.config/easy-dashboard-maker/plugins/*.toml` に置くだけで、自分だけのウィジェットを
-追加できます（再コンパイル不要）。「どこから値を取るか」（コマンド / ファイル）と
-「どう見せるか」（`readout` / `bar` / `ring` / `sparkline` / `list` / `text`）を宣言する
-形式で、書式は [`docs/plugins.md`](docs/plugins.md)、動く例は
+`~/.config/linux-easy-dashboard/plugins/*.toml` に置くだけで、自分だけのウィジェットを
+追加できます（再コンパイル不要）。「どこから値を取るか」（`command` / `file` / `clock` / `http`）と
+「どう見せるか」（`readout` / `bar` / `ring` / `sparkline` / `list` / `facts` / `bars` / `text`
+＋時計・モニタ・ランチャー等のリッチビュー）を宣言する形式です。
+書式は [`docs/plugins.md`](docs/plugins.md)、動く例は
 [`examples/plugins/`](examples/plugins) にあります。
 
 ```sh
-mkdir -p ~/.config/easy-dashboard-maker/plugins
-cp examples/plugins/*.toml ~/.config/easy-dashboard-maker/plugins/
+mkdir -p ~/.config/linux-easy-dashboard/plugins
+cp examples/plugins/*.toml ~/.config/linux-easy-dashboard/plugins/
 ```
 
 置いたあと **メニュー → プラグイン → プラグインを再読み込み** で追加ピッカーに並びます。
@@ -115,7 +118,7 @@ cp examples/plugins/*.toml ~/.config/easy-dashboard-maker/plugins/
 src/
 ├── main.rs            起動・ログ・panic フック
 ├── application.rs     AdwApplication、CSS 読み込み、GAction
-├── window.rs          ウィンドウ、ヘッダーバー、保存デバウンス
+├── window.rs          ウィンドウ、ヘッダーバー、保存デバウンス、ピッカー
 ├── config.rs          XDG 準拠の永続化（serde + serde_json）
 ├── graphics.rs        cairo 描画ヘルパとテーマ色の解決（Ink）
 ├── anim.rs            バネ（AdwSpringAnimation）ヘルパ
@@ -124,8 +127,16 @@ src/
 │   ├── geometry.rs    矩形とスナップ計算（GTK 非依存・テスト済み）
 │   ├── imp.rs         GObject 実装（measure/allocate/snapshot、操作）
 │   └── mod.rs         公開 API
-├── widgets/           レジストリと各ウィジェット（未移行のもの・カテゴリ順）
-├── plugin.rs          ウィジェット定義（TOML）の読み込み・実行。組み込み定義もここ
+├── views/             ビューレンダラー（描画能力）
+│   ├── content.rs     見出し・メモ・ランチャー
+│   ├── time.rs        時計・アナログ・ワールド・カレンダー・今日
+│   ├── system.rs      CPU・メモリ・ディスク・ネット等のモニタ
+│   ├── media.rs       MPRIS メディアプレイヤー
+│   └── weather.rs     Open-Meteo 天気
+├── widgets/           タイル土台（WidgetContext、クロム、plugin ホスト）
+│   ├── mod.rs         共有 UI パーツとディスパッチ
+│   └── plugin.rs      プラグインタイル（ソース駆動ビューの配線）
+├── plugin.rs          TOML 定義の読み込み・検証・実行。組み込みもここ
 ├── platform/          /proc・/sys の読み取り
 ├── ui/
 │   ├── inspector.rs   詳細ダイアログ
@@ -146,10 +157,9 @@ src/
   アクセシビリティ・テーマがネイティブのまま。cairo はリング・折れ線・棒・天気記号を担当する。
 - **テーマ色は CSS 経由で解決**（`graphics::Ink`）。cairo は色を知らず、`@accent_bg_color`
   などを CSS クラスから読み取るので、ライト/ダークやアクセント色の変更に追従する。
-- **ウィジェットは `WidgetDescriptor` のレジストリ**。生成に失敗したら理由を表示する
-  プレースホルダになるだけで、他へ波及しない。レジストリの並びがそのまま追加一覧の
-  並びなので、**カテゴリごとに一続き**にしておく（崩れると見出しが飛び飛びになる。
-  テストで固定してある）。
+- **ウィジェットはすべて TOML のプラグイン宣言**。生成に失敗したら理由を表示する
+  プレースホルダになるだけで、他へ波及しない。ピッカーはプラグインカタログだけを
+  並べ、ビューワーは「表示・移動・リサイズ」以外の知識を持たない（マイクロカーネル）。
 - **設定はウィジェット自身が持つ**。`WidgetContext` にパッチを送ると、キャンバスが
   *最新の* 設定へマージして保存する（詳細ビューを開いたままでも古い値で上書きしない）。
   同じ値のパッチは無視するので、タイルが無駄に再構築されない。
@@ -205,16 +215,16 @@ cargo test
 
 ```sh
 # ウィジェット目録を 6 個ずつ並べて描画（ページ 0,1,2,3）
-EDM_DEV_GALLERY=1 EDM_SCREENSHOT=/tmp/g.png RUST_LOG=info ./target/release/easy-dashboard-maker
+LED_DEV_GALLERY=1 LED_SCREENSHOT=/tmp/g.png RUST_LOG=info ./target/release/linux-easy-dashboard
 
 # レイアウト・割り当て・詳細ビューの生成をログに出し、PNG に描画して終了
-EDM_SCREENSHOT=/tmp/shot.png ./target/release/easy-dashboard-maker
+LED_SCREENSHOT=/tmp/shot.png ./target/release/linux-easy-dashboard
 
 # 編集モードにして (x,y) のタイルを (dx,dy) ドラッグ＝スナップの検証
-EDM_DEV_DRAG="60,60,53,7" EDM_SCREENSHOT=/tmp/shot.png ./target/release/easy-dashboard-maker
+LED_DEV_DRAG="60,60,53,7" LED_SCREENSHOT=/tmp/shot.png ./target/release/linux-easy-dashboard
 
 # プラグインのタイルだけを並べる（目録には出ないため）
-EDM_DEV_PLUGIN="cpu-freq,thermal" EDM_SCREENSHOT=/tmp/p.png RUST_LOG=info ./target/release/easy-dashboard-maker
+LED_DEV_PLUGIN="cpu-freq,thermal" LED_SCREENSHOT=/tmp/p.png RUST_LOG=info ./target/release/linux-easy-dashboard
 ```
 
 ## これから

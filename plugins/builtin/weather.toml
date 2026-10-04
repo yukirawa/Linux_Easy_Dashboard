@@ -1,0 +1,30 @@
+id = "weather"
+name = "天気"
+summary = "現在の天気と数日予報（Open-Meteo）"
+icon = "weather-few-clouds-symbolic"
+category = "info"
+size = [360, 260]
+refresh = 600
+
+[view]
+kind = "weather"
+location = ""
+fahrenheit = false
+days = 3
+
+[[settings]]
+key = "location"
+kind = "text"
+title = "都市名（例: 東京）"
+
+[[settings]]
+key = "fahrenheit"
+kind = "bool"
+title = "華氏で表示"
+
+[[settings]]
+key = "days"
+kind = "int"
+title = "予報日数"
+min = 1
+max = 7

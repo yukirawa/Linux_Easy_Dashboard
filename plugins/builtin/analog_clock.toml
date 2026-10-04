@@ -1,0 +1,29 @@
+id = "analog_clock"
+name = "アナログ時計"
+summary = "cairo 描画の文字盤（正方形・縦横比固定）"
+icon = "preferences-system-time-symbolic"
+category = "time"
+size = [240, 240]
+aspect = 1.0
+refresh = 1
+
+[view]
+kind = "analog_clock"
+show_seconds = true
+show_numerals = false
+smooth_seconds = false
+
+[[settings]]
+key = "show_seconds"
+kind = "bool"
+title = "秒針を表示"
+
+[[settings]]
+key = "show_numerals"
+kind = "bool"
+title = "数字を表示"
+
+[[settings]]
+key = "smooth_seconds"
+kind = "bool"
+title = "秒針を滑らかに動かす"

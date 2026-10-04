@@ -1,0 +1,40 @@
+id = "system"
+name = "システム"
+summary = "CPU・メモリ・負荷・ディスクのまとめ"
+icon = "computer-symbolic"
+category = "system"
+size = [380, 280]
+refresh = 2
+
+[view]
+kind = "system"
+show_cpu = true
+show_memory = true
+show_load = true
+show_disk = true
+disk_path = "/"
+
+[[settings]]
+key = "show_cpu"
+kind = "bool"
+title = "CPU を表示"
+
+[[settings]]
+key = "show_memory"
+kind = "bool"
+title = "メモリを表示"
+
+[[settings]]
+key = "show_load"
+kind = "bool"
+title = "負荷を表示"
+
+[[settings]]
+key = "show_disk"
+kind = "bool"
+title = "ディスクを表示"
+
+[[settings]]
+key = "disk_path"
+kind = "text"
+title = "ディスクのマウントポイント"

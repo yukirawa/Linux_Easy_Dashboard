@@ -1,0 +1,24 @@
+id = "processes"
+name = "プロセス"
+summary = "重いプロセスのランキング"
+icon = "view-list-symbolic"
+category = "system"
+size = [340, 260]
+refresh = 3
+
+[view]
+kind = "processes"
+count = 6
+by_cpu = true
+
+[[settings]]
+key = "count"
+kind = "int"
+title = "表示する件数"
+min = 1
+max = 20
+
+[[settings]]
+key = "by_cpu"
+kind = "bool"
+title = "CPU 使用順（オフでメモリ順）"

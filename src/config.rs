@@ -1,7 +1,7 @@
 //! Persistent state: what the user has on their dashboard.
 //!
 //! Everything lives in a single human readable JSON document inside
-//! `$XDG_CONFIG_HOME/easy-dashboard-maker/layout.json`. The file is written
+//! `$XDG_CONFIG_HOME/linux-easy-dashboard/layout.json`. The file is written
 //! atomically (temp file + `rename`) so a crash can never leave a half written
 //! layout behind.
 
@@ -13,7 +13,7 @@ use log::{info, warn};
 use serde::{Deserialize, Serialize};
 
 /// Directory below `$XDG_CONFIG_HOME`.
-pub const APP_DIR: &str = "easy-dashboard-maker";
+pub const APP_DIR: &str = "linux-easy-dashboard";
 const LAYOUT_FILE: &str = "layout.json";
 const BACKUP_FILE: &str = "layout.invalid.json";
 const CONFIG_VERSION: u32 = 1;
@@ -115,12 +115,10 @@ impl Default for AppConfig {
 
 impl AppConfig {
     /// The layout used on first start: a clock wall plus the most useful system
-    /// readouts. The weather widget is deliberately *not* here — it is the only
+    /// readouts. The weather plugin is deliberately *not* here — it is the only
     /// one that talks to the network, so it is added on request.
     pub fn starter() -> Self {
-        use crate::widgets::{analog_clock, calendar, clock, cpu, memory, system};
-
-        let mut analog = WidgetInstance::new(analog_clock::KIND, 400, 24, 240, 240);
+        let mut analog = WidgetInstance::new("analog_clock", 400, 24, 240, 240);
         analog.aspect_locked = true;
 
         Self {
@@ -130,12 +128,12 @@ impl AppConfig {
                 maximized: false,
             },
             widgets: vec![
-                WidgetInstance::new(clock::KIND, 24, 24, 360, 170),
+                WidgetInstance::new("clock", 24, 24, 360, 170),
                 analog,
-                WidgetInstance::new(calendar::KIND, 664, 24, 380, 280),
-                WidgetInstance::new(cpu::KIND, 24, 215, 360, 240),
-                WidgetInstance::new(memory::KIND, 400, 280, 320, 220),
-                WidgetInstance::new(system::KIND, 24, 475, 360, 300),
+                WidgetInstance::new("calendar", 664, 24, 380, 280),
+                WidgetInstance::new("cpu", 24, 215, 360, 240),
+                WidgetInstance::new("memory", 400, 280, 320, 220),
+                WidgetInstance::new("system", 24, 475, 360, 300),
             ],
             ..Self::default()
         }
@@ -149,7 +147,7 @@ pub struct ConfigStore {
 }
 
 impl ConfigStore {
-    /// Resolves `$XDG_CONFIG_HOME/easy-dashboard-maker/layout.json`, creating
+    /// Resolves `$XDG_CONFIG_HOME/linux-easy-dashboard/layout.json`, creating
     /// the directory if needed.
     pub fn new() -> Result<Self> {
         let dir = glib::user_config_dir().join(APP_DIR);

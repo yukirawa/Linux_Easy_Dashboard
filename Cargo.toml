@@ -1,9 +1,9 @@
 [package]
-name = "easy-dashboard-maker"
+name = "linux-easy-dashboard"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-description = "A native GTK4 + libadwaita desktop dashboard for Arch Linux"
+description = "Linux_Easy_Dashboard — a native GTK4 + libadwaita desktop dashboard for Arch Linux"
 license = "MIT"
 
 [dependencies]

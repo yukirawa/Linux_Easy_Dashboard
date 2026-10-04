@@ -1,0 +1,22 @@
+id = "memory"
+name = "メモリ"
+summary = "使用量のリングゲージとスワップ"
+icon = "media-flash-symbolic"
+category = "system"
+size = [320, 220]
+refresh = 2
+
+[view]
+kind = "memory"
+show_swap = true
+warn_by_usage = true
+
+[[settings]]
+key = "show_swap"
+kind = "bool"
+title = "スワップを表示"
+
+[[settings]]
+key = "warn_by_usage"
+kind = "bool"
+title = "使用率に応じて色を変える"

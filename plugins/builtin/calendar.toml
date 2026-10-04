@@ -1,0 +1,16 @@
+id = "calendar"
+name = "カレンダー"
+summary = "今月（ロケール準拠、今日を強調）"
+icon = "x-office-calendar-symbolic"
+category = "time"
+size = [320, 280]
+refresh = 60
+
+[view]
+kind = "calendar"
+week_starts_monday = true
+
+[[settings]]
+key = "week_starts_monday"
+kind = "bool"
+title = "週の始まりを月曜にする"
